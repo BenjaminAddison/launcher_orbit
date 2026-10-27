@@ -603,6 +603,7 @@ bool orbSyncRemote() {
 }
 
 void orbArcBegin(const char *title, const String &sub) {
+    if (foreign()) return; // drawn by the UI task only
     orbEndTransient();
     static String s;
     s = sub;
@@ -614,12 +615,12 @@ void orbArcBegin(const char *title, const String &sub) {
     tick(0);
 }
 void orbArcProgress(uint32_t done, uint32_t total) {
-    if (!arcOn) return;
+    if (!arcOn || foreign()) return;
     arc.p = total ? clampf((float)done / total, 0, 1) : 0;
     tick(66);
 }
 void orbArcEnd() {
-    if (!arcOn) return;
+    if (!arcOn || foreign()) return;
     arc.p = 1;
     uint32_t t0 = launcherMillis();
     while (launcherMillis() - t0 < 160) frame(false);
