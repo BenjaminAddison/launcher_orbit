@@ -231,6 +231,7 @@ void TouchFooter2(uint16_t color) {
 ** Function name: BootScreen
 ** Description:   Start Display functions and display bootscreen
 ***************************************************************************************/
+#if !defined(ORBIT_UI) // Orbit UI has its own, see src/orbit/
 void initDisplay(bool doAll) {
 #ifndef HEADLESS
     static uint8_t _name = launcherRandom(0, 3);
@@ -370,10 +371,12 @@ void initDisplay(bool doAll) {
     vTaskDelay(50 / portTICK_PERIOD_MS);
 #endif
 }
+#endif // !ORBIT_UI
 /***************************************************************************************
 ** Function name: initDisplayLoop
 ** Description:   Start Display functions and display bootscreen
 ***************************************************************************************/
+#if !defined(ORBIT_UI) // Orbit UI has its own, see src/orbit/
 void initDisplayLoop() {
     tft->fillScreen(BGCOLOR);
     initDisplay(true);
@@ -384,6 +387,7 @@ void initDisplayLoop() {
     }
     returnToMenu = true;
 }
+#endif // !ORBIT_UI
 
 /***************************************************************************************
 ** Function name: displayCurrentVersion
@@ -448,6 +452,7 @@ void displayCurrentVersion(
 ** Function name: displayRedStripe
 ** Description:   Display Red Stripe with information
 ***************************************************************************************/
+#if !defined(ORBIT_UI) // Orbit UI has its own, see src/orbit/
 void displayRedStripe(const String &text, uint16_t fgcolor, uint16_t bgcolor, bool keepAwake) {
     // save tft settings before showing the stripe
     int _size = tft->getTextSize();
@@ -547,12 +552,14 @@ void displayRedStripe(const String &text, uint16_t fgcolor, uint16_t bgcolor, bo
     tft->setCursor(_x, _y);
     vTaskDelay(pdMS_TO_TICKS(10));
 }
+#endif // !ORBIT_UI
 
 /***************************************************************************************
 ** Function name: displayError
 ** Description:   Show an error via the red stripe, then either wait for a keypress
 **               or block for a fixed delay, depending on waitKeyPress.
 ***************************************************************************************/
+#if !defined(ORBIT_UI) // Orbit UI has its own, see src/orbit/
 void displayError(String txt, bool waitKeyPress) {
     displayRedStripe(txt);
     Serial.println("ERR: " + txt);
@@ -565,14 +572,18 @@ void displayError(String txt, bool waitKeyPress) {
     }
     while (waitKeyPress && !check(AnyKeyPress)) vTaskDelay(pdMS_TO_TICKS(10));
 }
+#endif // !ORBIT_UI
 
+#if !defined(ORBIT_UI) // Orbit UI has its own, see src/orbit/
 void displayMsg(String txt, bool waitKeyPress) { displayError(txt, waitKeyPress); }
+#endif // !ORBIT_UI
 
 /***************************************************************************************
 ** Function name: progressHandler
 ** Description:   Função para manipular o progresso da atualização
 ** Dependencia: prog_handler =>>    0 - Flash, 1 - SPIFFS
 ***************************************************************************************/
+#if !defined(ORBIT_UI) // Orbit UI has its own, see src/orbit/
 void progressHandler(size_t progress, size_t total) {
     vTaskDelay(pdMS_TO_TICKS(2));
 #if defined(E_PAPER_DISPLAY)
@@ -633,6 +644,7 @@ void progressHandler(size_t progress, size_t total) {
     wakeUpScreen();
     vTaskDelay(pdMS_TO_TICKS(2));
 }
+#endif // !ORBIT_UI
 
 /***************************************************************************************
 ** Function name: drawOptions
@@ -1282,6 +1294,7 @@ void drawBatteryStatus(uint8_t bat, bool charging) {
 **  Function: loopOptions
 **  Where you choose among the options in menu
 **********************************************************************/
+#if !defined(ORBIT_UI) // Orbit UI has its own, see src/orbit/
 int loopOptions(std::vector<Option> &options, bool bright, uint16_t al, uint16_t bg, bool border, int index) {
     bool redraw = true;
     bool exit = false;
@@ -1432,11 +1445,13 @@ int loopOptions(std::vector<Option> &options, bool bright, uint16_t al, uint16_t
 #endif
     return index;
 }
+#endif // !ORBIT_UI
 
 /*********************************************************************
 **  Function: loopVersions
 **  Where you choose which version to install/download **
 **********************************************************************/
+#if !defined(ORBIT_UI) // Orbit UI has its own, see src/orbit/
 void loopVersions(const String &_fid) {
     JsonDocument item = getVersionInfo(_fid);
     if (item.isNull()) { return; }
@@ -1572,11 +1587,13 @@ SAIR:
 #endif
     returnToMenu = false;
 }
+#endif // !ORBIT_UI
 
 /*********************************************************************
 **  Function: loopFirmware
 **  Where you choose which Firmware to see more data
 **********************************************************************/
+#if !defined(ORBIT_UI) // Orbit UI has its own, see src/orbit/
 void loopFirmware(bool isUpdate) {
     int _page = current_page;
     String order_by = "downloads";
@@ -1681,6 +1698,7 @@ RESTART:
     doc.clear();
     RAM_LOG("firmwareList-doc-cleared");
 }
+#endif // !ORBIT_UI
 
 /*********************************************************************
 **  Function: tftprintln

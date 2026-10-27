@@ -13,6 +13,9 @@
 #include "sd_functions.h"
 #include "utils.h"
 #include "wifi_crypto.h"
+#if defined(ORBIT_UI)
+#include "orbit/orbit_bridge.h"
+#endif
 #include <FS.h>
 #include <SD.h>
 #include <cstdio>
@@ -95,6 +98,12 @@ bool backupConfigFileIfPresent() {
 }
 
 void factoryReset() {
+#if defined(ORBIT_UI)
+    if (!orb::confirm(
+            "RESET", "Erase Launcher settings and saved Wi-Fi? Installed apps stay.", "RESET", true
+        ))
+        return;
+#else
     bool confirmed = false;
     options = {
         {"Reset Configs/Wifi", [&]() { confirmed = true; } },
@@ -102,6 +111,7 @@ void factoryReset() {
     };
     loopOptions(options);
     if (!confirmed) return;
+#endif
     lnvs::eraseNamespace("l_wifi");
     lnvs::eraseNamespace("launcher");
     backupConfigFileIfPresent();
@@ -569,6 +579,7 @@ static void selectLauncherOnKeyGpio() {
 }
 
 #if defined(HAS_KEYBOARD)
+#if !defined(ORBIT_UI) // Orbit UI has its own, see src/orbit/
 static void manageKeyBindings() {
     int idx = 0;
     returnToMenu = false;
@@ -584,8 +595,10 @@ static void manageKeyBindings() {
         idx = loopOptions(opts);
     }
 }
+#endif // !ORBIT_UI
 #endif
 
+#if !defined(ORBIT_UI) // Orbit UI has its own, see src/orbit/
 void settings_menu() {
     int idx = 0;
     returnToMenu = false;
@@ -716,6 +729,347 @@ void settings_menu() {
     tft->drawPixel(0, 0, 0);
     tft->fillScreen(BGCOLOR);
 }
+#endif // !ORBIT_UI
+
+#if defined(ORBIT_UI)
+/*********************************************************************
+** Orbit UI: settings as one grouped list. Left/right adjusts values in
+** place, Enter toggles or opens. Charge mode lives on the home orbit.
+**********************************************************************/
+namespace {
+const int DIM_STEPS[7] = {10, 15, 20, 30, 45, 60, 0};
+
+int pickValue(const char *title, const char *const *labels, int n, int cur) {
+    orb::MenuItem m[8];
+    for (int i = 0; i < n && i < 8; i++)
+        m[i] = {labels[i], 255, orb::RK_ITEM, i == cur ? "\xE2\x9C\x93" : nullptr};
+    return orb::sheet(m, n, title, nullptr, cur >= 0 ? cur : 0);
+}
+
+void shortcutsMenu() {
+    struct KeySrc : orb::ListSrc {
+        char keys[40];
+        String paths[40];
+        char caps[40][2];
+        int n = 0;
+        void load() {
+            n = 0;
+            String p;
+            for (char c = '0'; c <= 'z' && n < 40; c++)
+                if ((c <= '9' || c >= 'a') && getKeyBinding(String(c), p)) {
+                    keys[n] = c;
+                    caps[n][0] = toupper(c);
+                    caps[n][1] = 0;
+                    paths[n++] = p;
+                }
+        }
+        int count() override { return (n ? n : 1) + 1 + (n ? 1 : 0) + 1; }
+        uint8_t kind(int i) override {
+            if (i < (n ? n : 1)) return n ? orb::RK_ITEM : orb::RK_OP;
+            if (i == (n ? n : 1)) return orb::RK_SECTION;
+            return n && i == n + 1 ? orb::RK_DANGER : orb::RK_OP;
+        }
+        void row(int i, orb::Row &r) override {
+            r.kind = kind(i);
+            if (!n && i == 0) {
+                r.label = "No shortcuts yet";
+                r.color = orb::C(orb::T_dim);
+                return;
+            }
+            if (i < n) {
+                int sl = paths[i].lastIndexOf('/');
+                r.label = paths[i].c_str() + sl + 1;
+                String dir = sl > 0 ? paths[i].substring(0, sl) : String("/");
+                strncpy(r.right, dir.c_str(), sizeof(r.right) - 1);
+                r.sub = paths[i].c_str();
+                return;
+            }
+            if (i == (n ? n : 1)) {
+                r.label = "BIND FROM SD \xE2\x80\xBA FILE \xE2\x80\xBA BIND TO KEY";
+                return;
+            }
+            if (n && i == n + 1) {
+                r.label = "Reset all";
+                r.icon = orb::G_TRASH;
+                return;
+            }
+            r.label = "Back to settings";
+            r.icon = orb::G_BACK;
+        }
+        bool icon(int i, orb::Gfx &g, int x, int y, bool sel) override {
+            if (i >= n) return false;
+            orb::keycap(g, caps[i], x, y + 2, !sel);
+            return true;
+        }
+    } src;
+    src.load();
+    orb::ListScene sc;
+    sc.hdr.icon = orb::G_KEY;
+    sc.hdr.title = "SHORTCUTS";
+    sc.hdr.crumb = "HOME SCREEN KEYS";
+    sc.list.iconW = 14;
+    strcpy(sc.right, "PRESS THE KEY ON HOME");
+    sc.setup(&src, 0);
+    sc.list.iconW = 14;
+    orb::push(sc);
+    for (;;) {
+        sc.hk = src.n && sc.list.sel < src.n ? "\xE2\x8F\x8E|REMOVE|`|BACK" : "\xE2\x8F\x8E|OPEN|`|BACK";
+        int r = orbRun(sc);
+        if (r < 0) break;
+        if (src.n && r < src.n) {
+            char msg[96];
+            snprintf(
+                msg,
+                sizeof(msg),
+                "Remove '%c' \xE2\x86\x92 %s?",
+                toupper(src.keys[r]),
+                src.paths[r].c_str() + src.paths[r].lastIndexOf('/') + 1
+            );
+            if (orb::confirm("SHORTCUT", msg, "REMOVE", true)) {
+                removeKeyBinding(String(src.keys[r]));
+                orbToast("Shortcut removed");
+            }
+        } else if (src.n && r == src.n + 1) {
+            if (orb::confirm("RESET", "Remove every keyboard shortcut?", "REMOVE ALL", true))
+                clearKeyBindings();
+        } else if (r == src.count() - 1) break;
+        src.load();
+        sc.list.refresh(true);
+    }
+    if (orb::top() == &sc) orb::pop();
+    else orb::remove(sc);
+}
+} // namespace
+
+static void manageKeyBindings() { shortcutsMenu(); }
+
+void setBrightnessMenu() {
+    orb::BrightnessScene b;
+    b.val = (bright / 5) * 5 < 5 ? 5 : (bright / 5) * 5;
+    b.preview = [](int v) { setBrightness(v, false); };
+    if (orb::modal(b, orb::TR_NONE) == 1) {
+        setBrightness(b.val, true);
+        char msg[24];
+        snprintf(msg, sizeof(msg), "Brightness %d%%", b.val);
+        orbToast(msg);
+    } else setBrightness(bright, false);
+}
+
+void setUiColor() {
+    uint8_t orig = orbThemeIndex();
+    orb::ColorScene c;
+    c.sel = orig;
+    if (orb::modal(c, orb::TR_NONE) == 1) {
+        orbApplyTheme(c.sel);
+        orbSaveTheme(c.sel);
+        char msg[32];
+        snprintf(msg, sizeof(msg), "Theme %s saved", orb::THEME_NAMES[c.sel]);
+        orbToast(msg);
+    } else orbApplyTheme(orig);
+}
+
+void settings_menu() {
+    enum : uint8_t {
+        I_COLOR,
+        I_ROT,
+        I_BRIGHT,
+        I_DIM,
+        I_ALL,
+        I_DOT,
+        I_BKP,
+        I_SPIFFS,
+        I_AUTO,
+        I_BTL,
+        I_TIMER,
+        I_DDLB,
+        I_KEYS,
+        I_RESTART,
+        I_OFF,
+        I_RESET,
+        I_WIFIMOD,
+        I_ANIM,
+        I_DEVOFF,
+        I_HOME,
+        I_NONE
+    };
+    static orb::SettingsScene sc;
+    uint8_t ids[orb::SettingsScene::MAXI];
+    float animById[I_NONE + 1];
+    for (float &a : animById) a = -1;
+    int sel = 1;
+    returnToMenu = false;
+    bool first = true;
+    for (;;) {
+        for (int k = 0; !first && k < sc.n; k++) animById[ids[k]] = sc.items[k].anim; // toggles keep sliding
+        sc.n = 0;
+        auto add =
+            [&](uint8_t id, const char *label, uint8_t icon, uint8_t kind, bool on = false, bool adj = false
+            ) -> orb::SetItem & {
+            orb::SetItem &it = sc.items[sc.n];
+            it = orb::SetItem();
+            it.label = label;
+            it.icon = icon;
+            it.kind = kind;
+            it.on = on;
+            it.adj = adj;
+            it.anim = animById[id] >= 0 ? animById[id] : (on ? 1 : 0);
+            ids[sc.n++] = id;
+            return it;
+        };
+        const int landscapeA = 1 + ROT_OFFSET, landscapeB = 3 + ROT_OFFSET;
+        add(I_NONE, "DISPLAY", 255, orb::SK_SECTION);
+        strcpy(add(I_COLOR, "UI color", orb::G_EYE, orb::SK_THEME).val, orb::THEME_NAMES[orb::themeIdx]);
+        strcpy(
+            add(I_ROT, "Orientation", orb::G_ROTATE, orb::SK_VALUE).val,
+            rotation == landscapeB ? "LANDSCAPE 180" : "LANDSCAPE"
+        );
+        orb::SetItem &br = add(I_BRIGHT, "Brightness", orb::G_BRIGHT, orb::SK_BAR, false, true);
+        snprintf(br.val, sizeof(br.val), "%d%%", bright);
+        br.bar = bright / 100.0f;
+        orb::SetItem &dm = add(I_DIM, "Dim after", orb::G_TIMER, orb::SK_VALUE, false, true);
+        if (dimmerSet) snprintf(dm.val, sizeof(dm.val), "%dS", dimmerSet);
+        else strcpy(dm.val, "NEVER");
+        if (sdcardMounted) {
+            add(I_NONE, "FILES", 255, orb::SK_SECTION);
+            add(I_ALL, "See all files", orb::G_FILE, orb::SK_TOGGLE, !onlyBins);
+            add(I_DOT, "Show dotfiles", orb::G_EYE, orb::SK_TOGGLE, !noDotFiles);
+            add(I_BKP, "Auto backup", orb::G_BKP, orb::SK_TOGGLE, autoBackup);
+        }
+        add(I_SPIFFS, "Ask to copy SPIFFS", orb::G_CHIP, orb::SK_TOGGLE, askSpiffs);
+        add(I_NONE, "NETWORK", 255, orb::SK_SECTION);
+        add(I_AUTO, "Auto-connect known Wi-Fi", orb::G_WIFI, orb::SK_TOGGLE, autoConnect);
+        add(I_NONE, "BOOT", 255, orb::SK_SECTION);
+        add(I_BTL, "Boot to Launcher", orb::G_ROCKET, orb::SK_TOGGLE, !bootToApp);
+        snprintf(
+            add(I_TIMER, "Boot timer", orb::G_TIMER, orb::SK_VALUE, false, true).val, 20, "%dS", bootTimer + 1
+        );
+        add(I_DDLB, "Deep sleep opens Launcher", orb::G_POWER, orb::SK_TOGGLE, !DDLB);
+        {
+            JsonObject b = ensureKeyBindingObjectInternal();
+            snprintf(
+                add(I_KEYS, "Keyboard shortcuts", orb::G_KEY, orb::SK_VALUE).val,
+                20,
+                "%d KEYS \xE2\x80\xBA",
+                (int)b.size()
+            );
+        }
+        add(I_NONE, "POWER", 255, orb::SK_SECTION);
+        strcpy(add(I_RESTART, "Restart", orb::G_RESET, orb::SK_ACTION).val, "\xE2\x80\xBA");
+        strcpy(add(I_OFF, "Turn off", orb::G_POWER, orb::SK_ACTION).val, "\xE2\x80\xBA");
+        add(I_NONE, "SYSTEM", 255, orb::SK_SECTION);
+        if (!hostedWifiAvailable) add(I_WIFIMOD, "Retry WiFi module", orb::G_WIFI, orb::SK_ACTION);
+        add(I_RESET, "Reset configs & Wi-Fi", orb::G_WARN, orb::SK_DANGER);
+        if (dev_mode) {
+            add(I_NONE, "DEVELOPER", 255, orb::SK_SECTION);
+            strcpy(add(I_ANIM, "Boot animation", orb::G_PLAY, orb::SK_ACTION).val, "\xE2\x80\xBA");
+            add(I_DEVOFF, "Deactivate dev mode", orb::G_CROSS, orb::SK_OP);
+        }
+        add(I_HOME, "Main menu", orb::G_HOME, orb::SK_OP);
+        sc.version = LAUNCHER;
+        if (first) {
+            sc.begin(sel);
+            orb::push(sc);
+            first = false;
+        } else sc.list.refresh(true);
+        int r = orbRun(sc);
+        if (r < 0) break;
+        int i = r / 4, act = r % 4;
+        uint8_t id = ids[i];
+        int d = act == orb::SA_LEFT ? -1 : act == orb::SA_RIGHT ? 1 : 0;
+        bool save = true;
+        switch (id) {
+            case I_COLOR: setUiColor(); break;
+            case I_ROT: {
+                const char *L[2] = {"Landscape (default)", "Landscape 180\xC2\xB0"};
+                int p = pickValue("ORIENTATION", L, 2, rotation == landscapeB ? 1 : 0);
+                if (p >= 0) {
+                    rotation = p ? landscapeB : landscapeA;
+                    orbSetRotation(rotation);
+                }
+                break;
+            }
+            case I_BRIGHT:
+                if (d) {
+                    int v = bright + d * 5;
+                    setBrightness(v < 5 ? 5 : v > 100 ? 100 : v, true);
+                } else setBrightnessMenu();
+                break;
+            case I_DIM: {
+                int cur = 0;
+                for (int k = 0; k < 7; k++)
+                    if (DIM_STEPS[k] == dimmerSet) cur = k;
+                if (d) {
+                    cur += d;
+                    dimmerSet = DIM_STEPS[cur < 0 ? 0 : cur > 6 ? 6 : cur];
+                } else {
+                    const char *L[7] = {
+                        "10 seconds",
+                        "15 seconds",
+                        "20 seconds",
+                        "30 seconds",
+                        "45 seconds",
+                        "60 seconds",
+                        "Never"
+                    };
+                    int p = pickValue("DIM AFTER", L, 7, cur);
+                    if (p >= 0) dimmerSet = DIM_STEPS[p];
+                }
+                break;
+            }
+            case I_ALL: onlyBins = !onlyBins; break;
+            case I_DOT: noDotFiles = !noDotFiles; break;
+            case I_BKP: autoBackup = !autoBackup; break;
+            case I_SPIFFS: askSpiffs = !askSpiffs; break;
+            case I_AUTO: autoConnect = !autoConnect; break;
+            case I_BTL: bootToApp = !bootToApp; break;
+            case I_TIMER:
+                if (d) {
+                    int v = bootTimer + d;
+                    bootTimer = v < 0 ? 0 : v > 4 ? 4 : v;
+                } else {
+                    const char *L[5] = {"1 + 0 s", "1 + 1 s", "1 + 2 s", "1 + 3 s", "1 + 4 s"};
+                    int p = pickValue("BOOT TIMER", L, 5, bootTimer);
+                    if (p >= 0) bootTimer = p;
+                }
+                break;
+            case I_DDLB: DDLB = !DDLB; break;
+            case I_KEYS:
+                manageKeyBindings();
+                save = false;
+                break;
+            case I_RESTART:
+                if (orb::confirm("RESTART", "Restart the Cardputer now?", "RESTART"))
+                    releaseHeapObjectsAndReboot();
+                save = false;
+                break;
+            case I_OFF: orbPowerOff(); break;
+            case I_WIFIMOD:
+                launcherWifiHostedResetGuard();
+                releaseHeapObjectsAndReboot();
+                break;
+            case I_RESET:
+                factoryReset();
+                orbApplyTheme(orbThemeIndex());
+                save = false;
+                break;
+            case I_ANIM:
+                initDisplayLoop();
+                returnToMenu = false;
+                save = false;
+                break;
+            case I_DEVOFF:
+                dev_mode = false;
+                orbToast("Dev mode off");
+                break;
+            case I_HOME: returnToMenu = true; break;
+        }
+        if (save && id != I_HOME) saveConfigs();
+        if (returnToMenu) break;
+    }
+    if (orb::top() == &sc) orb::pop();
+    else orb::remove(sc);
+}
+#endif // ORBIT_UI
 
 // This function comes from interface.h
 void _setBrightness(uint8_t brightval) {
@@ -827,6 +1181,7 @@ int gsetRotation(bool set) {
 **  Function: setBrightnessMenu
 **  Handles Menu to set brightness
 **********************************************************************/
+#if !defined(ORBIT_UI) // Orbit UI has its own, see src/orbit/
 void setBrightnessMenu() {
     int original = bright;
     int val = (bright / 5) * 5;
@@ -933,10 +1288,12 @@ void setBrightnessMenu() {
     }
     tft->fillScreen(BGCOLOR);
 }
+#endif // !ORBIT_UI
 /*********************************************************************
 **  Function: setUiColor
 **  Change Ui Color scheme
 **********************************************************************/
+#if !defined(ORBIT_UI) // Orbit UI has its own, see src/orbit/
 void setUiColor() {
     options = {
         {"Default",
@@ -999,6 +1356,7 @@ void setUiColor() {
     loopOptions(options);
     displayRedStripe("Saving...");
 }
+#endif // !ORBIT_UI
 /*********************************************************************
 **  Function: setdimmerSet
 **  set dimmerSet time
@@ -1040,6 +1398,7 @@ void setBootTimer() {
 **  Function: chargeMode
 **  Enter in Charging mode
 **********************************************************************/
+#if !defined(ORBIT_UI) // Orbit UI has its own, see src/orbit/
 void chargeMode() {
 #ifndef CONFIG_IDF_TARGET_ESP32P4
     setCpuFrequencyMhz(80);
@@ -1064,6 +1423,7 @@ void chargeMode() {
 #endif
     setBrightness(bright, false);
 }
+#endif // !ORBIT_UI
 String get_efuse_mac_as_string() {
     uint8_t mac[6] = {0};
     String str = "";

@@ -1002,6 +1002,7 @@ String generalKeyboard(
 
 /// This calls the QUERTY keyboard. Returns the user typed strings, return the ASCII ESC character
 /// if the operation was cancelled
+#if !defined(ORBIT_UI) // Orbit UI has its own, see src/orbit/
 String keyboard(String current_text, int max_size, const String &textbox_title) {
     max_FM_size = tftWidth / (LW * _fm) - 1;
     max_FP_size = tftWidth / (LW)-2;
@@ -1009,6 +1010,7 @@ String keyboard(String current_text, int max_size, const String &textbox_title) 
         current_text, max_size, textbox_title, qwerty_keyset
     );
 }
+#endif // !ORBIT_UI
 
 // /// This calls a keyboard with the characters useful to write hexadecimal codes.
 // /// Returns the user typed strings, return the ASCII ESC character if the operation was cancelled
@@ -1051,6 +1053,16 @@ static float analogBatMv() {
         adcInitialized = true;
     }
     return (float)analogReadMilliVolts(ANALOG_BAT_PIN) * ANALOG_BAT_MULTIPLIER;
+}
+#endif
+#if defined(ORBIT_UI)
+// Cell voltage for the charge screen, 0 when the board cannot measure it.
+float launcherBatteryVolts() {
+#ifdef ANALOG_BAT_PIN
+    return analogBatMv() / 1000.0f;
+#else
+    return 0;
+#endif
 }
 #endif
 

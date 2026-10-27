@@ -18,6 +18,10 @@
 #include <algorithm>
 #include <esp_ota_ops.h>
 #include <globals.h>
+#if defined(ORBIT_UI)
+#include "orbit/orbit_bridge.h"
+#include <esp_wifi.h>
+#endif
 
 #define M5_SERVER_PATH "https://m5burner-cdn.m5stack.com/firmware/"
 
@@ -27,6 +31,7 @@ constexpr int kWifiConnectAttempts = 20;
 ** Function name: wifiConnect
 ** Description:   Connects to wifiNetwork
 ***************************************************************************************/
+#if !defined(ORBIT_UI) // Orbit UI has its own, see src/orbit/
 bool wifiConnect(const String &ssid, int encryptation, bool isAP) {
     RAM_LOG(isAP ? "wifiConnect-ap-start" : "wifiConnect-sta-start");
     if (!isAP) {
@@ -118,6 +123,8 @@ bool wifiConnect(const String &ssid, int encryptation, bool isAP) {
     RAM_LOG("wifiConnect-end");
     return isAP || launcherWifiIsConnected();
 }
+#endif                 // !ORBIT_UI
+#if !defined(ORBIT_UI) // Orbit UI has its own, see src/orbit/
 bool connectWifi() {
     RAM_LOG("connectWifi-start");
     displayRedStripe("Scanning...");
@@ -156,6 +163,7 @@ bool connectWifi() {
     loopOptions(options);
     return launcherWifiIsConnected();
 }
+#endif // !ORBIT_UI
 
 bool ensureWifiConnected(const String &ssid, int encryptation, bool isAP) {
     RAM_LOG("ensureWifiConnected-start");
@@ -168,6 +176,7 @@ bool ensureWifiConnected(const String &ssid, int encryptation, bool isAP) {
 ** Function name: ota_function
 ** Description:   Start OTA function
 ***************************************************************************************/
+#if !defined(ORBIT_UI) // Orbit UI has its own, see src/orbit/
 void ota_function() {
 #ifndef DISABLE_OTA
     if (!hostedWifiAvailable) {
@@ -239,6 +248,343 @@ void ota_function() {
     tft->fillScreen(BGCOLOR);
 #endif
 }
+#endif // !ORBIT_UI
+
+#if defined(ORBIT_UI)
+/***************************************************************************************
+** Orbit UI: radar scan, handshake screen, LauncherHub tiles. Same flow as above.
+***************************************************************************************/
+bool wifiConnect(const String &ssid, int encryptation, bool isAP) {
+    RAM_LOG(isAP ? "wifiConnect-ap-start" : "wifiConnect-sta-start");
+    if (isAP) {
+#if !CONFIG_ESP_HOSTED_ENABLED
+        launcherWifiStop();
+        vTaskDelay(50 / portTICK_PERIOD_MS);
+#endif
+        RAM_LOG("before-wifi-start-ap");
+        launcherWifiStartAp("Launcher", "", 6, 4);
+        vTaskDelay(250 / portTICK_PERIOD_MS);
+        launcherConsolePrintf("IP: %s\n", launcherWifiApIp().c_str());
+        return true;
+    }
+    bool found = false, wrongPass = false;
+    getConfigs();
+    String knownPwd;
+    if (getWifiCredential(ssid, knownPwd)) {
+        pwd = knownPwd;
+        found = true;
+        launcherConsolePrintf("Found SSID: %s\n", ssid.c_str());
+    }
+    for (;;) {
+        if (!found || wrongPass) {
+            if (encryptation > 0) {
+                char buf[64];
+                strncpy(buf, pwd.c_str(), 63);
+                buf[63] = 0;
+                if (!orb::askText("NETWORK PASSWORD", ssid.c_str(), buf, 63, true)) {
+                    returnToMenu = true;
+                    return false;
+                }
+                pwd = buf;
+            }
+            if (!found) {
+                if (setWifiCredential(ssid, pwd)) {
+                    found = true;
+                    saveConfigs();
+                }
+            } else if (setWifiCredential(ssid, pwd)) saveConfigs();
+        }
+        orbEndTransient();
+        orb::ConnectScene c;
+        strncpy(c.ssid, ssid.c_str(), sizeof(c.ssid) - 1);
+        orb::push(c);
+        uint32_t t0 = launcherMillis();
+        int result = 0; // 1 linked, 2 wrong password, 3 no reply, 4 cancelled
+        RAM_LOG("before-wifi-connect-status");
+        while (!result) {
+            LauncherWifiConnectState st = launcherWifiConnectStatus(ssid.c_str(), pwd.c_str(), 50);
+            c.tries = 1 + (launcherMillis() - t0) / 500;
+            if (st == LauncherWifiConnectState::Connected) result = 1;
+            else if (st == LauncherWifiConnectState::WrongPassword) result = 2;
+            else if (st == LauncherWifiConnectState::Failed || c.tries > kWifiConnectAttempts)
+                // some boards miss the Connected event but already have an IP
+                result = launcherWifiIsConnected() ? 1 : 3;
+            else {
+                orb::frame();
+                if (c.res != orb::RUNNING) result = 4;
+            }
+        }
+        if (result != 4) {
+            c.state = result == 1 ? orb::ConnectScene::S_LINKED : orb::ConnectScene::S_BROKEN;
+            c.failPassword = result == 2;
+            if (result == 1) snprintf(c.sub, sizeof(c.sub), "IP %s", launcherWifiLocalIp().c_str());
+            uint32_t t1 = launcherMillis();
+            while (launcherMillis() - t1 < (result == 1 ? 900u : 700u)) orb::frame(false);
+        }
+        orb::pop();
+        if (result == 1) {
+            char msg[48];
+            snprintf(msg, sizeof(msg), "Connected to %.30s", ssid.c_str());
+            orbToast(msg);
+            return true;
+        }
+        if (result == 4) {
+            returnToMenu = true;
+            return false;
+        }
+        if (result == 2) {
+            orb::errorBox(
+                (String("Wrong password for ") + ssid + ". Type it again.").c_str(), "WRONG PASSWORD"
+            );
+            wrongPass = true;
+            continue;
+        }
+        static const char *const B[2] = {"MAIN MENU", "RETRY"};
+        orb::DialogOpts o;
+        o.kind = orb::DK_ERROR;
+        o.title = "NO RESPONSE";
+        String m = ssid + " did not answer after 20 tries.";
+        o.msg = m.c_str();
+        o.buttons = B;
+        o.nbtn = 2;
+        o.sel = 1;
+        if (orb::dialog(o) != 1) {
+            returnToMenu = true;
+            return false;
+        }
+    }
+}
+
+namespace {
+struct ScanJob {
+    std::vector<LauncherWifiAp> *out;
+    int n;
+};
+void scanWork(void *p) {
+    ScanJob *j = static_cast<ScanJob *>(p);
+    j->n = launcherWifiScan(*j->out);
+}
+} // namespace
+
+bool connectWifi() {
+    RAM_LOG("connectWifi-start");
+#if CONFIG_ESP_HOSTED_ENABLED
+    launcherWifiStop();
+#endif
+    static orb::WifiScene w;
+    w = orb::WifiScene();
+    orbEndTransient();
+    orb::push(w);
+    std::vector<LauncherWifiAp> networks;
+    ScanJob sj{&networks, -1};
+    orbWork(scanWork, &sj, 6144, true); // the radar sweeps while the radio scans
+    bool cancelled = w.res == orb::WF_BACK;
+    if (sj.n < 0 && !cancelled) displayError("WiFi scan failed");
+    if (sj.n < 0 || cancelled) {
+        orb::pop();
+        if (cancelled) returnToMenu = true;
+        return false;
+    }
+    for (int i = 0; i < sj.n && w.n < orb::WifiScene::MAXN; i++) {
+        const LauncherWifiAp &ap = networks[i];
+        if (ap.ssid.empty()) continue;
+        bool dup = false; // one row per network name (mesh and dual-band repeat it)
+        for (int k = 0; k < w.n && !dup; k++) dup = !strcmp(w.nets[k].ssid, ap.ssid.c_str());
+        if (dup) continue;
+        orb::Net &n = w.nets[w.n++];
+        strncpy(n.ssid, ap.ssid.c_str(), sizeof(n.ssid) - 1);
+        n.ssid[sizeof(n.ssid) - 1] = 0;
+        n.rssi = ap.rssi;
+        n.authmode = static_cast<uint8_t>(ap.authmode);
+        n.auth = ap.authmode != WIFI_AUTH_OPEN;
+        String known;
+        n.saved = getWifiCredential(String(n.ssid), known);
+        if (n.saved && autoConnect && w.autoNet < 0) w.autoNet = w.n - 1;
+    }
+    w.results(0.8f);
+    bool ok = false;
+    returnToMenu = false;
+    for (;;) {
+        int r = orb::run(w);
+        if (r >= 0) {
+            launcherConsolePrintf("Connecting to: %s\n", w.nets[r].ssid);
+            if (wifiConnect(String(w.nets[r].ssid), w.nets[r].authmode)) {
+                ok = true;
+                break;
+            }
+            if (returnToMenu && w.autoNet >= 0 && r == w.autoNet) { // the saved one failed: show the list
+                w.autoNet = -1;
+                returnToMenu = false;
+                continue;
+            }
+            if (returnToMenu) break;
+            continue;
+        }
+        if (r == orb::WF_HIDDEN) {
+            char hid[33] = "";
+            if (orb::askText("NETWORK NAME", "HIDDEN SSID", hid, 32) && hid[0] &&
+                wifiConnect(String(hid), 8)) {
+                ok = true;
+                break;
+            }
+            returnToMenu = false;
+            continue;
+        }
+        returnToMenu = true; // back or main menu
+        break;
+    }
+    if (orb::top() == &w) orb::pop();
+    else orb::remove(w);
+    return ok || launcherWifiIsConnected();
+}
+
+namespace {
+int countDownloads(const String &path) {
+    File f = SDM.open(path);
+    if (!f) return 0;
+    int n = 0;
+    const char *pat = "\"fid\"";
+    int m = 0;
+    while (f.available()) {
+        char ch = f.read();
+        m = ch == pat[m] ? m + 1 : (ch == pat[0] ? 1 : 0);
+        if (!pat[m]) {
+            n++;
+            m = 0;
+        }
+    }
+    f.close();
+    return n;
+}
+
+void favoritesList() {
+    struct FavSrc : orb::ListSrc {
+        int count() override { return favorite.size() + 1; }
+        uint8_t kind(int i) override { return i < (int)favorite.size() ? orb::RK_ITEM : orb::RK_OP; }
+        void row(int i, orb::Row &r) override {
+            if (i < (int)favorite.size()) {
+                r.label = favorite[i]["name"] | "?";
+                r.icon = orb::G_STAR;
+                r.iconC = orb::C(orb::T_acc);
+                return;
+            }
+            r.label = "Main menu";
+            r.icon = orb::G_HOME;
+        }
+    } src;
+    orb::ListScene sc;
+    sc.hdr.icon = orb::G_STAR;
+    sc.hdr.title = "FAVORITES";
+    static char crumb[16];
+    sc.hdr.crumb = crumb;
+    sc.hk = "\xE2\x8F\x8E|ACTIONS|`|BACK";
+    sc.setup(&src, 0);
+    orb::push(sc);
+    for (;;) {
+        snprintf(crumb, sizeof(crumb), "%d SAVED", (int)favorite.size());
+        sc.list.refresh(true);
+        int r = orbRun(sc);
+        if (r < 0 || r >= (int)favorite.size()) {
+            if (r >= 0) returnToMenu = true;
+            break;
+        }
+        String fid = favorite[r]["fid"].as<String>(), link = favorite[r]["link"].as<String>();
+        String name = favorite[r]["name"].as<String>();
+        orb::MenuItem m[4] = {
+            {fid.length() ? "View firmware" : "Install",
+             fid.length() ? orb::G_EYE : orb::G_INSTALL,
+             orb::RK_ITEM,
+             nullptr                                                                          },
+            {"Remove favorite",                          orb::G_TRASH, orb::RK_DANGER, nullptr},
+            {"Back to list",                             orb::G_BACK,  orb::RK_OP,     nullptr},
+            {"Main menu",                                orb::G_HOME,  orb::RK_OP,     nullptr},
+        };
+        int p = orb::sheet(m, 4, "FAVORITE", name.c_str());
+        if (p == 0) {
+            if (fid.length()) loopVersions(fid);
+            else installExtFirmware(link);
+        } else if (p == 1) {
+            favorite.remove(r);
+            saveConfigs();
+            orbToast("Favorite removed");
+        } else if (p == 3) returnToMenu = true;
+        if (returnToMenu) break;
+    }
+    if (orb::top() == &sc) orb::pop();
+    else orb::remove(sc);
+}
+} // namespace
+
+void ota_function() {
+#ifndef DISABLE_OTA
+    if (!hostedWifiAvailable) {
+        displayError("ESP-Hosted unavailable: no WiFi", true);
+        return;
+    }
+    RAM_LOG("ota-start");
+    returnToMenu = false;
+    if (!ensureWifiConnected()) return;
+    String dwnJsonPath = dwn_path;
+    if (!dwnJsonPath.startsWith("/")) dwnJsonPath = "/" + dwnJsonPath;
+    if (!dwnJsonPath.endsWith("/")) dwnJsonPath += "/";
+    dwnJsonPath += "downloaded.json";
+    bool hasDownloads = sdcardMounted && SDM.exists(dwnJsonPath);
+    if (favorite.size() == 0 && !hasDownloads) {
+        orbFetchText = "GETTING CATALOG";
+        if (GetJsonFromLauncherHub()) loopFirmware();
+        return;
+    }
+    orb::OtaMenuScene m;
+    static String crumb, tag, favNames;
+    wifi_ap_record_t ap;
+    crumb = esp_wifi_sta_get_ap_info(&ap) == ESP_OK ? String((const char *)ap.ssid) : String("ONLINE");
+    crumb.toUpperCase();
+    m.crumb = crumb.c_str();
+    tag = ota_tag;
+    tag.toUpperCase();
+    orb::push(m);
+    for (;;) {
+        m.n = 0;
+        orb::HubTile &c = m.tiles[m.n++];
+        c = {0, orb::G_SAT, "CATALOG", "ON LAUNCHERHUB", tag.c_str(), "", 0};
+        if (total_firmware > 0) snprintf(c.big, sizeof(c.big), "%d", total_firmware);
+        else strcpy(c.big, "--");
+        if (favorite.size() > 0) {
+            favNames = "";
+            for (JsonObject f : favorite) {
+                String nm = f["name"].as<String>();
+                int cut = nm.indexOf(" - ");
+                if (cut > 0) nm = nm.substring(0, cut);
+                favNames += (favNames.length() ? " \xC2\xB7 " : "") + nm;
+            }
+            favNames.toUpperCase();
+            orb::HubTile &f = m.tiles[m.n++];
+            f = {1, orb::G_STAR, "FAVORITES", "SAVED BY YOU", favNames.c_str(), "", 0};
+            snprintf(f.big, sizeof(f.big), "%d", (int)favorite.size());
+        }
+        if (hasDownloads) {
+            orb::HubTile &u = m.tiles[m.n++];
+            u = {2, orb::G_DL, "UPDATES", "DOWNLOADED", "CHECK ONLINE", "", 0};
+            snprintf(u.big, sizeof(u.big), "%d", countDownloads(dwnJsonPath));
+        }
+        if (m.sel >= m.n) m.sel = 0;
+        int r = orbRun(m);
+        if (r < 0) break;
+        if (r == 0) {
+            orbFetchText = "GETTING CATALOG";
+            if (GetJsonFromLauncherHub()) loopFirmware();
+        } else if (r == 1) favoritesList();
+        else if (r == 2) {
+            orbFetchText = "CHECKING UPDATES";
+            if (checkForUpdates()) loopFirmware(true);
+        }
+        if (returnToMenu) break;
+    }
+    if (orb::top() == &m) orb::pop();
+    else orb::remove(m);
+#endif
+}
+#endif // ORBIT_UI
 
 #ifndef DISABLE_OTA
 
@@ -525,6 +871,24 @@ bool installFirmwareDynamic(
     }
 
     pauseInputHandlerTask();
+#if defined(ORBIT_UI)
+    orbJobStage("FLASH APP", updateSize, appEntry.offset, true);
+    for (const auto &dp : dataPartitions) {
+        if (!dp.hasEntry || dp.copySize == 0) continue;
+        char l[20];
+        snprintf(
+            l,
+            sizeof(l),
+            "FLASH %s",
+            dp.subtype == 0x81   ? "FAT"
+            : dp.subtype == 0x83 ? "LITTLEFS"
+                                 : "SPIFFS"
+        );
+        orbJobStage(l, dp.copySize > dp.entry.size ? dp.entry.size : dp.copySize, dp.entry.offset);
+    }
+    orbJobStage("WRITE TABLE", 0x6000);
+    orbJobStage("SET BOOT", 0x4000);
+#endif
     bool success = false;
     prog_handler = 0;
     progressHandler(0, updateSize);
@@ -602,6 +966,7 @@ DONE:
 // outStatus, when given, receives the HTTP status of the last attempt, so the caller
 // can tell a definitive server answer (e.g. 404 for a category with no firmware
 // registered yet) from a transport failure and word the message itself.
+#if !defined(ORBIT_UI) // Orbit UI has its own, see below
 bool getInfo(
     const String &serverUrl, JsonDocument &_doc, JsonDocument *filter = nullptr, int *outStatus = nullptr
 ) {
@@ -685,6 +1050,83 @@ bool getInfo(
     resumeInputHandlerTask();
     return false;
 }
+#endif // !ORBIT_UI
+
+#if defined(ORBIT_UI)
+namespace {
+struct GetJob {
+    const char *url;
+    String *payload;
+    LauncherHttpResponse *resp;
+    bool ok;
+};
+void getWork(void *p) {
+    GetJob *j = static_cast<GetJob *>(p);
+    j->ok = launcherHttpGetToString(j->url, *j->payload, 65536, j->resp);
+}
+} // namespace
+
+// Same retries as above, with the downlink screen animating during each request
+bool getInfo(
+    const String &serverUrl, JsonDocument &_doc, JsonDocument *filter = nullptr, int *outStatus = nullptr
+) {
+    if (!launcherWifiIsConnected()) {
+        displayError("WiFi not connected");
+        return false;
+    }
+    int q = serverUrl.indexOf("/", 8);
+    orb::FetchScene &f = orbFetchBegin(q > 0 ? serverUrl.substring(q) : serverUrl);
+    pauseInputHandlerTask();
+    const uint8_t maxAttempts = 5;
+    for (uint8_t attempt = 0; attempt < maxAttempts; ++attempt) {
+        snprintf(f.tries, sizeof(f.tries), "TRY %u/%u", attempt + 1, maxAttempts);
+        String payload;
+        LauncherHttpResponse resp;
+        launcherConsolePrintf("getInfo: GET attempt %u url_len=%u\n", attempt + 1, serverUrl.length());
+        GetJob job{serverUrl.c_str(), &payload, &resp, false};
+        orbWork(getWork, &job, 12288);
+        if (job.ok) {
+            launcherConsolePrintf("getInfo: GET ok status=%d bytes=%u\n", resp.status, payload.length());
+            _doc.clear();
+            DeserializationError error =
+                filter ? deserializeJson(_doc, payload, DeserializationOption::Filter(*filter))
+                       : deserializeJson(_doc, payload);
+            resumeInputHandlerTask();
+            if (error) {
+                displayError(String("JSON Parse Failed: ") + error.c_str());
+                _doc.clear();
+                return false;
+            }
+            return true;
+        }
+        String reason = resp.status >= 200 && resp.status < 600 ? String("HTTP ") + resp.status
+                                                                : String("Net err ") + resp.transport_error;
+        launcherConsolePrintf(
+            "getInfo: GET failed attempt=%u status=%d transport=%d\n",
+            attempt + 1,
+            resp.status,
+            resp.transport_error
+        );
+        if (outStatus) *outStatus = resp.status;
+        if (resp.status >= 400 && resp.status < 500) {
+            resumeInputHandlerTask();
+            if (!outStatus) displayError(reason);
+            return false;
+        }
+        snprintf(f.tries, sizeof(f.tries), "TRY %u/%u \xC2\xB7 %s", attempt + 1, maxAttempts, reason.c_str());
+        if (!launcherWifiIsConnected()) {
+            resumeInputHandlerTask();
+            displayError("WiFi lost during fetch");
+            return false;
+        }
+        uint32_t t0 = launcherMillis();
+        while (launcherMillis() - t0 < 500) orb::frame(false);
+    }
+    resumeInputHandlerTask();
+    displayError("Server unreachable");
+    return false;
+}
+#endif
 
 /***************************************************************************************
 ** Function name: GetJsonFromLauncherHub

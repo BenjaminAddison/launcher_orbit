@@ -12,6 +12,9 @@
 #include "ram_profile.h"
 #include "sd_functions.h"
 #include "utils.h"
+#if defined(ORBIT_UI)
+#include "orbit/orbit_bridge.h"
+#endif
 #include <esp_ota_ops.h>
 #include <esp_partition.h>
 #include <globals.h>
@@ -192,6 +195,26 @@ bool rangeSlider(
         start = end - minSize;
     }
 
+#if defined(ORBIT_UI)
+    orb::RangeScene rs;
+    String t = title;
+    t.toUpperCase();
+    strncpy(rs.label, t.c_str(), sizeof(rs.label) - 1);
+    rs.minO = minOffset;
+    rs.maxO = maxOffset;
+    rs.start = start;
+    rs.end = end;
+    rs.step = step;
+    rs.minSize = minSize;
+    rs.fam = orb::famOf(title.c_str());
+    orbEndTransient();
+    bool keep = orb::modal(rs) == 1;
+    if (keep) {
+        start = rs.start;
+        end = rs.end;
+    }
+    return keep;
+#else
     int moveStart = -1;
     bool moveSelected = false;
 
@@ -263,6 +286,7 @@ bool rangeSlider(
         if (check(EscPress) || returnToMenu) return false;
         yield();
     }
+#endif
 }
 
 String partitionTypeName(const LauncherPartitionEntry &entry) {
@@ -328,6 +352,36 @@ void waitForSelectRelease() {
 }
 
 void showPartitionDetails(const LauncherPartitionEntry &entry) {
+#if defined(ORBIT_UI)
+    {
+        static const char *const K[7] = {"LABEL", "TYPE", "SUBTYPE", "OFFSET", "SIZE", "FLAGS", "OWNER"};
+        String owner = isProtectedPartition(entry) && entry.isApp() ? String("Launcher") : String("-");
+        for (const LauncherAppMetadata &a : launcherListInstalledApps()) {
+            if (a.label == entry.label || a.spiffsLabel == entry.label)
+                owner = a.name.length() ? a.name : a.label;
+            for (const String &f : a.fatLabels)
+                if (f == entry.label) owner = a.name.length() ? a.name : a.label;
+        }
+        String V[7] = {
+            entry.label,
+            partitionTypeName(entry),
+            partitionSubtypeName(entry),
+            hex32(entry.offset),
+            hex32(entry.size) + " (" + sizeText(entry.size) + ")",
+            hex32(entry.flags),
+            owner
+        };
+        orbInfo(
+            "PARTITION",
+            isProtectedPartition(entry) ? "PROTECTED" : "EDITABLE",
+            isProtectedPartition(entry),
+            K,
+            V,
+            7
+        );
+        return;
+    }
+#endif
     tft->fillScreen(BGCOLOR);
     resetTftDisplay(8, 8, FGCOLOR, _fp, BGCOLOR, BGCOLOR);
     tftprintln("Partition", 8);
@@ -355,6 +409,18 @@ void showPartitionDetails(const LauncherPartitionEntry &entry) {
 }
 
 void showFreeRangeDetails(const LauncherPartitionRange &range) {
+#if defined(ORBIT_UI)
+    {
+        static const char *const K[3] = {"OFFSET", "SIZE", "END"};
+        String V[3] = {
+            hex32(range.offset),
+            hex32(range.size) + " (" + sizeText(range.size) + ")",
+            hex32(range.offset + range.size)
+        };
+        orbInfo("FREE RANGE", "UNUSED", false, K, V, 3);
+        return;
+    }
+#endif
     tft->fillScreen(BGCOLOR);
     resetTftDisplay(8, 8, FGCOLOR, _fp, BGCOLOR, BGCOLOR);
     tftprintln("Free Range", 8);
@@ -755,6 +821,120 @@ bool applyPartitionChanges(const LauncherPartitionTable &table) {
 
     return releaseHeapObjectsAndReboot();
 }
+#if defined(ORBIT_UI)
+// The flash map: the same options as the text list, drawn as the chip
+orb::PmanScene pman;
+bool pmanOn = false;
+
+int orbPartList(LauncherPartitionTable &table, std::vector<Option> &opts, bool dirty, int idx) {
+    pman.nrows = pman.nops = 0;
+    pman.flash = table.flashSize ? table.flashSize : 0x800000;
+    pman.dirty = dirty;
+    std::vector<LauncherAppMetadata> apps = launcherListInstalledApps();
+    for (const LauncherAppMetadata &a : apps)
+        if (orb::ninstalled < 10) strncpy(orb::installed[orb::ninstalled++], a.label.c_str(), 17);
+    auto ownerOf = [&](const char *label) -> const LauncherAppMetadata * {
+        for (const LauncherAppMetadata &a : apps) {
+            if (a.spiffsLabel == label) return &a;
+            for (const String &f : a.fatLabels)
+                if (f == label) return &a;
+        }
+        return nullptr;
+    };
+    int opt = 1; // 0 is the "Partition Scheme" title row
+    for (const LauncherPartitionEntry &e : table.entries) {
+        if (e.offset < 0x10000) continue;
+        if (pman.nrows < orb::PmanScene::MAXR) {
+            orb::PartRow &r = pman.rows[pman.nrows++];
+            strncpy(r.label, e.label, 16);
+            r.label[16] = 0;
+            String ts =
+                partitionTypeName(e) + "/" + partitionSubtypeName(e) + " \xC2\xB7 " + sizeText(e.size);
+            ts.toUpperCase();
+            strncpy(r.right, ts.c_str(), sizeof(r.right) - 1);
+            r.right[sizeof(r.right) - 1] = 0;
+            r.ofs = e.offset;
+            r.size = e.size;
+            r.prot = isProtectedPartition(e);
+            const LauncherAppMetadata *own = e.isData() ? ownerOf(e.label) : nullptr;
+            r.kind = e.isApp() && r.prot ? orb::PK_LAUNCHER
+                     : e.isOtaApp()      ? orb::PK_APP
+                     : own               ? orb::PK_OWNED
+                     : r.prot            ? orb::PK_SYS
+                                         : orb::PK_DATA;
+            r.fam = orb::famOf(own ? own->label.c_str() : e.label);
+            r.opt = opt;
+        }
+        opt++;
+    }
+    for (const LauncherPartitionRange &rg : launcherPartitionFreeRanges(table)) {
+        if (rg.size == 0) continue;
+        if (pman.nrows < orb::PmanScene::MAXR) {
+            orb::PartRow &r = pman.rows[pman.nrows++];
+            strcpy(r.label, "FREE");
+            String ts = sizeText(rg.size);
+            ts.toUpperCase();
+            strncpy(r.right, ts.c_str(), sizeof(r.right) - 1);
+            r.right[sizeof(r.right) - 1] = 0;
+            r.ofs = rg.offset;
+            r.size = rg.size;
+            r.kind = orb::PK_FREE;
+            r.prot = false;
+            r.fam = 0;
+            r.opt = opt;
+        }
+        opt++;
+    }
+    for (int i = 1; i < pman.nrows; i++) // by offset, like the bar
+        for (int j = i; j > 0 && pman.rows[j].ofs < pman.rows[j - 1].ofs; j--) {
+            orb::PartRow t = pman.rows[j];
+            pman.rows[j] = pman.rows[j - 1];
+            pman.rows[j - 1] = t;
+        }
+    opt++; // "* = protected"
+    for (; opt < (int)opts.size() && pman.nops < 8; opt++) {
+        String l = opts[opt].label;
+        String lo = l;
+        lo.toLowerCase();
+        static String labels[8];
+        labels[pman.nops] = lo.startsWith("apply")        ? String("Apply changes")
+                            : lo.startsWith("discard")    ? String("Discard changes")
+                            : lo.startsWith("erase ble")  ? String("Erase BLE bonds")
+                            : lo.startsWith("wipe")       ? String("Wipe flash memory")
+                            : lo.startsWith("format nvs") ? String("Format NVS")
+                                                          : l;
+        uint8_t icon = lo.startsWith("apply")       ? orb::G_CHECK
+                       : lo.startsWith("discard")   ? orb::G_RESET
+                       : lo.startsWith("erase ble") ? orb::G_BLE
+                       : lo == "back"               ? orb::G_BACK
+                                                    : orb::G_WARN;
+        uint8_t kind = lo.startsWith("wipe") || lo.startsWith("format nvs") ? orb::RK_DANGER : orb::RK_OP;
+        int k = pman.nops++;
+        pman.ops[k] = {labels[k].c_str(), icon, kind, (int16_t)opt};
+    }
+    int sel = -1;
+    for (int i = 0; i < pman.count(); i++)
+        if (pman.optAt(i) == idx) sel = i;
+    if (!pmanOn) {
+        pman.build(sel >= 0 ? sel : 0);
+        orbEndTransient();
+        orb::push(pman);
+        pmanOn = true;
+    } else pman.build(sel >= 0 ? sel : pman.list.sel);
+    int r = orbRun(pman);
+    if (r < 0 || r >= (int)opts.size()) return -1;
+    if (opts[r].operation) opts[r].operation();
+    return r;
+}
+
+void orbPartListEnd() {
+    if (!pmanOn) return;
+    pmanOn = false;
+    orbEndTransient();
+    if (orb::top() == &pman) orb::pop();
+    else orb::remove(pman);
+}
+#endif
 } // namespace
 
 void partList() {
@@ -944,13 +1124,24 @@ void partList() {
         if (idx >= static_cast<int>(partitionOptions.size())) {
             idx = partitionOptions.empty() ? 0 : static_cast<int>(partitionOptions.size()) - 1;
         }
+#if defined(ORBIT_UI)
+        idx = orbPartList(table, partitionOptions, dirty, idx);
+#else
         idx = loopOptions(partitionOptions, false, ALCOLOR, BGCOLOR, false, idx);
         tft->fillScreen(BGCOLOR);
+#endif
     }
+#if defined(ORBIT_UI)
+    orbPartListEnd();
+#endif
 }
 
 void dumpPartition(const char *partitionLabel, const char *outputPath) {
+#if defined(ORBIT_UI)
+    orbJobBegin(String("Backup ") + partitionLabel, false);
+#else
     tft->fillScreen(BGCOLOR);
+#endif
     const esp_partition_t *partition =
         esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_ANY, partitionLabel);
     if (partition == NULL) {
@@ -1272,14 +1463,21 @@ bool attachPartition(const String &_from, String _to) {
         displayError("Can't reopen target");
         return false;
     }
+#if defined(ORBIT_UI)
+    orbArcBegin("MERGING", _from.substring(_from.lastIndexOf('/') + 1));
+#endif
 
     // Adjust the target file size
     if (target.size() > offset) {
         // Erases the old partition with 0xFF
         target.seek(offset);
         while (target.position() < target.size()) {
+#if defined(ORBIT_UI)
+            orbArcProgress(target.position() - offset, target.size() - offset);
+#else
             int angle = (360 * (target.position() - offset)) / (target.size() - offset);
             tft->drawArc(tftWidth / 2, tftHeight / 2, 50, 45, 0, angle, FGCOLOR, BGCOLOR);
+#endif
             target.write(0xFF);
         }
     } else if (target.size() < offset) {
@@ -1290,8 +1488,12 @@ bool attachPartition(const String &_from, String _to) {
         uint8_t buf[chunk];
         memset(buf, 0xFF, chunk);
         while (fillLen > 0) {
+#if defined(ORBIT_UI)
+            orbArcProgress(offset - fillLen, offset);
+#else
             int angle = (360 * (offset - fillLen)) / offset;
             tft->drawArc(tftWidth / 2, tftHeight / 2, 40, 35, 0, angle, FGCOLOR, BGCOLOR);
+#endif
             size_t w = min(chunk, fillLen);
             target.write(buf, w);
             fillLen -= w;
@@ -1301,6 +1503,9 @@ bool attachPartition(const String &_from, String _to) {
     // copy data from source file
     File from = SDM.open(_from, FILE_READ);
     if (!from) {
+#if defined(ORBIT_UI)
+        orbArcEnd();
+#endif
         displayError("Can't open source");
         target.close();
         return false;
@@ -1308,8 +1513,12 @@ bool attachPartition(const String &_from, String _to) {
 
     target.seek(offset);
     while (true) {
+#if defined(ORBIT_UI)
+        orbArcProgress(target.position() - offset, from.size());
+#else
         int angle = (360 * (target.position() - offset)) / from.size();
         tft->drawArc(tftWidth / 2, tftHeight / 2, 35, 30, 0, angle, ALCOLOR, BGCOLOR);
+#endif
         size_t bytesRead = from.read(buff, sizeof(buff));
         if (!bytesRead) break;
         target.write(buff, bytesRead);
@@ -1317,6 +1526,9 @@ bool attachPartition(const String &_from, String _to) {
 
     from.close();
     target.close();
+#if defined(ORBIT_UI)
+    orbArcEnd();
+#endif
 
     launcherConsolePrintf(
         "Partition data from '%s' attached at offset 0x%X into '%s'\n",

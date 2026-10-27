@@ -7,6 +7,9 @@
 #include "nvs_helpers.h"
 #include "settings.h"
 #include "utils.h"
+#if defined(ORBIT_UI)
+#include "orbit/orbit_bridge.h"
+#endif
 #include <cstring>
 #include <esp_flash.h>
 #include <esp_image_format.h>
@@ -607,7 +610,78 @@ void launcherShowAppActions(const char *label) {
                           }});
     appOptions.push_back({"Cancel", []() {}});
 
+#if defined(ORBIT_UI)
+    // Dossier on the left (slot, sizes, backup, source), actions on the right
+    orb::AppScene sc;
+    String fullName = launcherAppDisplayNameForLabel(label);
+    strncpy(sc.name, fullName.c_str(), sizeof(sc.name) - 1);
+    strncpy(sc.label, label, sizeof(sc.label) - 1);
+    for (int i = 0, k = 0; fullName[i] && k < 2; i++)
+        if (isalnum((unsigned char)fullName[i])) sc.ini[k++] = toupper((unsigned char)fullName[i]);
+    sc.fam = orb::famOf(label);
+    const esp_partition_t *bootPart = esp_ota_get_boot_partition();
+    sc.bootsNext = bootPart && appLabel == bootPart->label;
+    static String vals[6];
+    LauncherPartitionTable table;
+    bool haveTable = launcherPartitionReadCurrent(table, nullptr);
+    auto sizeOf = [&](const String &l) -> String {
+        const LauncherPartitionEntry *e =
+            haveTable ? launcherPartitionFindByLabel(table, l.c_str()) : nullptr;
+        char b[12];
+        orb::fmtSize(b, e ? e->size : 0);
+        return String(b);
+    };
+    int n = 0;
+    sc.keys[n] = "APP";
+    vals[n] = sizeOf(appLabel);
+    sc.vals[n] = vals[n].c_str();
+    n++;
+    std::vector<String> data = loadFatLabelsForLabel(label);
+    String sp = loadSpiffsLabelForLabel(label);
+    if (sp.length()) data.insert(data.begin(), sp);
+    static String dataKeys[2];
+    for (size_t i = 0; i < data.size() && n < 3; i++) {
+        dataKeys[n - 1] = data[i];
+        dataKeys[n - 1].toUpperCase();
+        sc.keys[n] = dataKeys[n - 1].c_str();
+        vals[n] = sizeOf(data[i]);
+        sc.vals[n] = vals[n].c_str();
+        n++;
+    }
+    BackupInstallInfo info = appNum.isEmpty() ? BackupInstallInfo() : loadInstalledFromConfig(appNum);
+    sc.keys[n] = "BACKUP";
+    vals[n] = hasRestorableBackup(info) ? String("SAVED") : String("NONE YET");
+    sc.vals[n] = vals[n].c_str();
+    n++;
+    sc.keys[n] = "SOURCE";
+    vals[n] = info.sdFilepath.length() ? info.sdFilepath.substring(info.sdFilepath.lastIndexOf('/') + 1)
+                                       : String("OTA");
+    vals[n].toUpperCase();
+    sc.vals[n] = vals[n].c_str();
+    n++;
+    sc.nrows = n;
+    static orb::MenuItem items[8];
+    int ni = 0;
+    for (size_t i = 0; i < appOptions.size() && ni < 8; i++)
+        items[ni++] = {
+            appOptions[i].label.c_str(),
+            orbOptIcon(appOptions[i].label),
+            orbOptKind(appOptions[i].label),
+            nullptr
+        };
+    sc.menu.items = items;
+    sc.menu.n = ni;
+    sc.begin();
+    orbEndTransient();
+    orb::push(sc);
+    int r = orb::run(sc); // the action runs with the dossier still behind it
+    if (r >= 0 && r < (int)appOptions.size() && appOptions[r].operation) appOptions[r].operation();
+    orbEndTransient();
+    if (orb::top() == &sc) orb::pop();
+    else orb::remove(sc);
+#else
     loopOptions(appOptions);
+#endif
 }
 
 void launcherShowAppLauncher() {

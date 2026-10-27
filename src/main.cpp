@@ -15,6 +15,9 @@
 #include "powerSave.h"
 #include "ram_profile.h"
 #include "utils.h"
+#if defined(ORBIT_UI)
+#include "orbit/orbit_bridge.h"
+#endif
 #include <functional>
 #include <iostream>
 #include <string>
@@ -278,9 +281,13 @@ void setup() {
 // Init Display
 #if !defined(HEADLESS) || defined(HEADLESS_WITH_TFT)
     RAM_LOG("before-tft-begin");
+#if defined(ORBIT_UI)
+    orbPanelBegin(); // inversion included
+#else
     tft->begin();
+#endif
     RAM_LOG("after-tft-begin");
-#ifdef TFT_INVERSION_ON
+#if defined(TFT_INVERSION_ON) && !defined(ORBIT_UI)
     tft->invertDisplay(true);
 #endif
 
@@ -364,6 +371,22 @@ void setup() {
     int j = 0;
     LongPress = true;
     RAM_LOG("before-bootscreen");
+#if defined(ORBIT_UI)
+    {
+        // Launch pad countdown: -1 opens Launcher, n boots installed app n (digit key or
+        // the picker), 200 is the countdown running out with an app on the pad.
+        int choice = orbBootScreen();
+        if (choice == 200) {
+            if (launcherBootCurrentApp()) {
+                _setBrightness(0);
+                return (void)releaseHeapObjectsAndReboot();
+            }
+        } else if (choice >= 0 && choice < static_cast<int>(bootApps.size())) {
+            launcherBootAppByLabel(bootApps[choice].label.c_str());
+        }
+        goto Launcher;
+    }
+#endif
     while (launcherMillis() < i + (1000 + bootToApp * bootTimer * 1000)) { // increased from 2500 to 5000
         initDisplay();                                                     // Inicia o display
 
@@ -454,7 +477,9 @@ void setup() {
 Launcher:
     RAM_LOG("launcher-label");
     LongPress = false;
+#if !defined(ORBIT_UI)
     tft->fillScreen(BGCOLOR);
+#endif
     launcherConsoleFlush();
 #if LED > 0 && defined(HEADLESS)
     launcherGpioWrite(LED, LED_ON ? LOW : HIGH); // turn off the LED
@@ -467,6 +492,9 @@ Launcher:
 **********************************************************************/
 #ifndef HEADLESS
 void loop() {
+#if defined(ORBIT_UI)
+    orbMainMenu();
+#else
     static bool loggedFirstLoop = false;
     if (!loggedFirstLoop) {
         RAM_LOG("first-loop-start");
@@ -704,6 +732,7 @@ void loop() {
 
 END:
     vTaskDelay(pdMS_TO_TICKS(10));
+#endif // ORBIT_UI
 }
 
 #else

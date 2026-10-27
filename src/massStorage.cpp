@@ -3,6 +3,9 @@
 #include "display.h"
 #include "idf/launcher_platform.h"
 #include "sd_functions.h"
+#if defined(ORBIT_UI)
+#include "orbit/orbit_bridge.h"
+#endif
 #if defined(SOC_USB_OTG_SUPPORTED) && !defined(DISABLE_MASS_STORAGE)
 #include "esp_private/usb_phy.h"
 #include "tusb.h"
@@ -27,6 +30,9 @@
 #endif
 
 bool MassStorage::shouldStop = false;
+#if defined(ORBIT_UI)
+static volatile uint32_t s_bytesRead = 0, s_bytesWritten = 0; // activity on the USB screen
+#endif
 
 namespace {
 usb_phy_handle_t s_usbPhy = nullptr;
@@ -434,7 +440,39 @@ void MassStorage::setup() {
 }
 
 void MassStorage::loop() {
+#if defined(ORBIT_UI)
+    // Cardputer and computer joined by the cable; packets show reads and writes
+    orb::UsbScene u;
+    uint64_t bytes = SDM.cardSize();
+    snprintf(
+        u.card,
+        sizeof(u.card),
+        "SD %u.%u GB \xC2\xB7 LUN 0 \xC2\xB7 SECTOR %u",
+        (unsigned)(bytes / 1000000000ULL),
+        (unsigned)(bytes / 100000000ULL % 10),
+        (unsigned)SDM.sectorSize()
+    );
+    s_bytesRead = s_bytesWritten = 0;
+    orbEndTransient();
+    orb::push(u);
+    resetGlobals();
+    while (u.res == orb::RUNNING) {
+        u.rd = s_bytesRead;
+        u.wr = s_bytesWritten;
+        if (u.state != orb::UsbScene::S_EJECT)
+            u.state = s_usbMounted ? orb::UsbScene::S_MOUNTED : orb::UsbScene::S_WAIT;
+        if (shouldStop && u.state != orb::UsbScene::S_EJECT) { // the computer ejected the drive
+            u.state = orb::UsbScene::S_EJECT;
+            u.et = 0;
+        }
+        orb::frame();
+    }
+    if (orb::top() == &u) orb::pop();
+    else orb::remove(u);
+    orbToast("SD ejected \xC2\xB7 safe to unplug");
+#else
     while (!check(EscPress) && !shouldStop) yield();
+#endif
 }
 
 void MassStorage::beginUsb() {
@@ -462,6 +500,10 @@ void MassStorage::beginUsb() {
 }
 
 void MassStorage::displayMessage(String message) {
+#if defined(ORBIT_UI)
+    (void)message; // the USB screen shows the state itself
+    return;
+#endif
     tft->drawRoundRect(5, 5, tftWidth - 10, tftHeight - 10, 5, ALCOLOR);
     tft->fillRoundRect(6, 6, tftWidth - 12, tftHeight - 12, 5, BGCOLOR);
     setTftDisplay(7, 7, ALCOLOR, _fp, BGCOLOR);
@@ -471,6 +513,9 @@ void MassStorage::displayMessage(String message) {
 }
 
 int32_t usbWriteCallback(uint32_t lba, uint32_t offset, uint8_t *buffer, uint32_t bufsize) {
+#if defined(ORBIT_UI)
+    s_bytesWritten += bufsize;
+#endif
     const uint32_t secSize = SDM.sectorSize();
     if (secSize == 0 || secSize > 512) {
         MSC_LOG(
@@ -563,6 +608,9 @@ static bool readSectors(uint8_t *dst, uint32_t sector, uint32_t count, uint32_t 
 }
 
 int32_t usbReadCallback(uint32_t lba, uint32_t offset, void *buffer, uint32_t bufsize) {
+#if defined(ORBIT_UI)
+    s_bytesRead += bufsize;
+#endif
     const uint32_t secSize = SDM.sectorSize();
     if (secSize == 0 || secSize > 512) {
         MSC_LOG(
@@ -638,6 +686,10 @@ bool usbStartStopCallback(uint8_t power_condition, bool start, bool load_eject) 
 }
 
 void drawUSBStickIcon(bool plugged) {
+#if defined(ORBIT_UI)
+    (void)plugged; // called from the USB task; the UI task reads the state instead
+    return;
+#endif
     MassStorage::displayMessage("");
 
     float scale;

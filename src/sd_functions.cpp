@@ -12,6 +12,9 @@
 #include "ram_profile.h"
 #include "settings.h"
 #include "utils.h"
+#if defined(ORBIT_UI)
+#include "orbit/orbit_bridge.h"
+#endif
 #include <algorithm>
 #include <esp_app_format.h>
 #include <esp_image_format.h>
@@ -181,6 +184,9 @@ bool pasteFile(const String &path) {
     size_t bytesRead;
     int tot = sourceFile.size();
     int prog = 0;
+#if defined(ORBIT_UI)
+    orbArcBegin("COPYING", fileToCopy.substring(fileToCopy.lastIndexOf('/') + 1));
+#endif
     // tft->drawRect(5,tftHeight-12, (tftWidth-10), 9, FGCOLOR);
     while ((bytesRead = sourceFile.read(buffer, bufferSize)) > 0) {
         if (destFile.write(buffer, bytesRead) != bytesRead) {
@@ -190,10 +196,14 @@ bool pasteFile(const String &path) {
             return false;
         } else {
             prog += bytesRead;
+#if defined(ORBIT_UI)
+            orbArcProgress(prog, tot);
+#else
             float rad = (tot > 0) ? (360.0f * prog / tot) : 0.0f;
             tft->drawArc(
                 tftWidth / 2, tftHeight / 2, tftHeight / 4, tftHeight / 5, 0, int(rad), ALCOLOR, BGCOLOR
             );
+#endif
             // tft->fillRect(7,tftHeight-10, (tftWidth-14)*prog/tot, 5, FGCOLOR);
         }
     }
@@ -201,6 +211,9 @@ bool pasteFile(const String &path) {
     // Fechar ambos os arquivos
     sourceFile.close();
     destFile.close();
+#if defined(ORBIT_UI)
+    orbArcEnd();
+#endif
     return true;
 }
 
@@ -299,6 +312,7 @@ static bool isReservedBindKey(char c) {
     return false;
 }
 
+#if !defined(ORBIT_UI) // Orbit UI has its own, see src/orbit/
 static bool captureBindKey(char &outKey) {
     displayRedStripe("Press a key to bind...");
     while (true) {
@@ -319,13 +333,31 @@ static bool captureBindKey(char &outKey) {
         vTaskDelay(pdMS_TO_TICKS(20));
     }
 }
+#endif // !ORBIT_UI
 
 static void bindFileToKeyMenu(const String &path) {
+#if defined(ORBIT_UI)
+    // Key map: navigation keys hatched red, keys already bound in blue
+    String name = path.substring(path.lastIndexOf('/') + 1), bound, unused;
+    orb::BindScene b;
+    b.name = name.c_str();
+    for (char c = '0'; c <= 'z'; c++)
+        if ((c <= '9' || c >= 'a') && bound.length() < 38 && getKeyBinding(String(c), unused)) bound += c;
+    strncpy(b.bound, bound.c_str(), sizeof(b.bound) - 1);
+    int k = orb::modal(b, orb::TR_NONE);
+    if (k <= 0) return;
+    String key = String((char)k);
+    setKeyBinding(key, path);
+    char msg[64];
+    snprintf(msg, sizeof(msg), "'%c' \xE2\x86\x92 %s", toupper(k), name.c_str());
+    orbToast(msg);
+#else
     char keyChar = 0;
     if (!captureBindKey(keyChar)) return;
     String key = String(keyChar);
     setKeyBinding(key, path);
     displayMsg(String("'") + key + "' bound");
+#endif
 }
 #endif
 
@@ -333,6 +365,7 @@ static void bindFileToKeyMenu(const String &path) {
 **  Function: loopSD
 **  Where you choose what to do wuth your SD Files
 **********************************************************************/
+#if !defined(ORBIT_UI) // Orbit UI has its own, see src/orbit/
 String loopSD(bool filePicker) {
     RAM_LOG(filePicker ? "loopSD-picker-start" : "loopSD-start");
     // Function using loopOptions to store and handle files
@@ -462,6 +495,197 @@ RESTART:
     tft->fillScreen(BGCOLOR);
     return fileToUse;
 }
+#endif // !ORBIT_UI
+
+#if defined(ORBIT_UI)
+namespace {
+// The SD card as the browser sees it: names now, sizes on demand, bound keys cached
+struct SdCardFs : orb::SdFs {
+    char keys[40];
+    String paths[40];
+    int nkeys = 0;
+    void loadBindings() {
+        nkeys = 0;
+        String p;
+        for (char c = '0'; c <= 'z' && nkeys < 40; c++)
+            if ((c <= '9' || c >= 'a') && getKeyBinding(String(c), p)) {
+                keys[nkeys] = c;
+                paths[nkeys++] = p;
+            }
+    }
+    bool list(const char *path, orb::SDScene &sc) override {
+        loadBindings();
+        File root = SDM.open(path);
+        if (!root || !root.isDirectory()) return false;
+        bool isDir;
+        for (;;) {
+            String full = root.getNextFileName(&isDir);
+            if (full == "") break;
+            if (!sc.add(full.c_str() + full.lastIndexOf('/') + 1, isDir, orb::SIZE_UNKNOWN)) break;
+            ALIVIATE_TASK;
+        }
+        root.close();
+        return true;
+    }
+    uint32_t size(const char *path) override {
+        File f = SDM.open(path);
+        if (!f) return orb::SIZE_UNKNOWN;
+        uint32_t s = f.isDirectory() ? 0 : f.size();
+        f.close();
+        return s;
+    }
+    char boundKey(const char *path) override {
+        for (int i = 0; i < nkeys; i++)
+            if (paths[i] == path) return keys[i];
+        return 0;
+    }
+};
+
+void setClipName(orb::SDScene &sd) {
+    String n = fileToCopy.substring(fileToCopy.lastIndexOf('/') + 1);
+    strncpy(sd.clip, n.c_str(), sizeof(sd.clip) - 1);
+    sd.clip[sizeof(sd.clip) - 1] = 0;
+}
+
+void pasteHere(const String &folder) {
+    String n = fileToCopy.substring(fileToCopy.lastIndexOf('/') + 1);
+    if (!SDM.exists(fileToCopy)) {
+        orb::errorBox("The copied file is gone. Copy it again.");
+        return;
+    }
+    if (pasteFile(folder)) orbToast((String("Pasted ") + n).c_str());
+    else orb::errorBox("Paste failed. Is the card full?", "CANNOT PASTE");
+}
+
+void deleteEntry(const String &full, const String &name, bool dir, uint32_t size) {
+    char msg[96], det[96], sz[12];
+    snprintf(msg, sizeof(msg), "Delete %s? This can't be undone.", name.c_str());
+    orb::fmtSize(sz, size == orb::SIZE_UNKNOWN ? 0 : size);
+    if (dir) strcpy(det, "FOLDER AND EVERYTHING IN IT");
+    else snprintf(det, sizeof(det), "%s \xC2\xB7 %s", sz, full.c_str());
+    if (!orb::confirm("DELETE", msg, "DELETE", true, det)) return;
+    if (deleteFromSd(full)) orbToast("Deleted");
+    else orb::errorBox("Could not delete it.");
+}
+} // namespace
+
+String loopSD(bool filePicker) {
+    RAM_LOG(filePicker ? "loopSD-picker-start" : "loopSD-start");
+    returnToMenu = false;
+    fileToUse = "";
+    if (!setupSdCard()) {
+        displayError("SD not found or not formatted in FAT32");
+        return "";
+    }
+    static SdCardFs fs;
+    orb::SDScene sd;
+    sd.fs = &fs;
+    sd.picker = filePicker;
+    sd.onlyBins = onlyBins;
+    sd.showDot = !noDotFiles;
+    setClipName(sd);
+    sd.open("/");
+    orbEndTransient();
+    orb::push(sd);
+    for (;;) {
+        int r = orbRun(sd);
+        if (r == orb::SD_EXIT) break;
+        int e = sd.selEntry();
+        String folder = sd.path, name = e >= 0 ? String(sd.name(e)) : String();
+        String full = e >= 0 ? (folder == "/" ? "/" + name : folder + "/" + name) : folder;
+        bool dir = e < 0 || (sd.ents[e].flags & orb::SDF_DIR);
+        uint32_t size = e >= 0 ? sd.ents[e].size : 0;
+        if (e >= 0 && !dir && size == orb::SIZE_UNKNOWN) size = sd.ents[e].size = fs.size(full.c_str());
+        if (r == orb::SD_PICK) {
+            fileToUse = full;
+            break;
+        }
+        bool hasClip = fileToCopy != "";
+        if (r == orb::SD_FILE) {
+            bool bin = sd.ents[e].flags & orb::SDF_BIN;
+            enum { A_INSTALL, A_BIND, A_NEWDIR, A_RENAME, A_COPY, A_PASTE, A_DELETE, A_HOME };
+            orb::MenuItem m[8];
+            uint8_t act[8];
+            int n = 0;
+            auto add = [&](const char *l, uint8_t ic, uint8_t k, uint8_t a) {
+                m[n] = {l, ic, k, nullptr};
+                act[n++] = a;
+            };
+            add("Install", orb::G_INSTALL, orb::RK_ITEM, A_INSTALL);
+            if (bin) add("Bind to key", orb::G_BIND, orb::RK_ITEM, A_BIND);
+            add("New folder", orb::G_NEWDIR, orb::RK_ITEM, A_NEWDIR);
+            add("Rename", orb::G_PEN, orb::RK_ITEM, A_RENAME);
+            add("Copy", orb::G_COPY, orb::RK_ITEM, A_COPY);
+            if (hasClip) add("Paste here", orb::G_PASTE, orb::RK_ITEM, A_PASTE);
+            add("Delete", orb::G_TRASH, orb::RK_DANGER, A_DELETE);
+            add("Main menu", orb::G_HOME, orb::RK_OP, A_HOME);
+            char title[32], sz[12];
+            orb::fmtSize(sz, size);
+            snprintf(title, sizeof(title), "%s \xC2\xB7 %s", bin ? "FIRMWARE" : "FILE", sz);
+            int p = orb::sheet(m, n, title, name.c_str());
+            if (p < 0) continue;
+            switch (act[p]) {
+                case A_INSTALL: updateFromSD(full); break; // reboots on success
+                case A_BIND: bindFileToKeyMenu(full); break;
+                case A_NEWDIR:
+                    if (createFolder(folder)) orbToast("Folder created");
+                    break;
+                case A_RENAME:
+                    if (renameFile(full, name)) orbToast("Renamed");
+                    break;
+                case A_COPY:
+                    if (copyFile(full)) {
+                        setClipName(sd);
+                        orbToast("Copied \xC2\xB7 paste it in any folder");
+                    }
+                    break;
+                case A_PASTE: pasteHere(folder); break;
+                case A_DELETE: deleteEntry(full, name, false, size); break;
+                case A_HOME: returnToMenu = true; break;
+            }
+        } else if (r == orb::SD_FOLDER) {
+            enum { F_NEWDIR, F_PASTE, F_RENAME, F_DELETE, F_HOME };
+            orb::MenuItem m[5];
+            uint8_t act[5];
+            int n = 0;
+            auto add = [&](const char *l, uint8_t ic, uint8_t k, uint8_t a) {
+                m[n] = {l, ic, k, nullptr};
+                act[n++] = a;
+            };
+            add("New folder", orb::G_NEWDIR, orb::RK_ITEM, F_NEWDIR);
+            if (hasClip) add("Paste here", orb::G_PASTE, orb::RK_ITEM, F_PASTE);
+            if (e >= 0) {
+                add("Rename", orb::G_PEN, orb::RK_ITEM, F_RENAME);
+                add("Delete", orb::G_TRASH, orb::RK_DANGER, F_DELETE);
+            }
+            add("Main menu", orb::G_HOME, orb::RK_OP, F_HOME);
+            String sub =
+                e >= 0 ? name : (folder == "/" ? String("/") : folder.substring(folder.lastIndexOf('/') + 1));
+            int p = orb::sheet(m, n, "FOLDER", sub.c_str());
+            if (p < 0) continue;
+            switch (act[p]) {
+                case F_NEWDIR:
+                    if (createFolder(folder)) orbToast("Folder created");
+                    break;
+                case F_PASTE: pasteHere(e >= 0 ? full : folder); break;
+                case F_RENAME:
+                    if (renameFile(full, name)) orbToast("Renamed");
+                    break;
+                case F_DELETE: deleteEntry(full, name, true, 0); break;
+                case F_HOME: returnToMenu = true; break;
+            }
+        }
+        if (returnToMenu) break;
+        sd.onlyBins = onlyBins;
+        sd.showDot = !noDotFiles;
+        sd.reload();
+    }
+    orbEndTransient();
+    if (orb::top() == &sd) orb::pop();
+    else orb::remove(sd);
+    return fileToUse;
+}
+#endif
 
 static String installedAppNameFromPath(const String &path) { return launcherInstallAppDisplayName(path); }
 
@@ -691,6 +915,33 @@ static bool installFromSdDynamic(
     }
 
     pauseSdInstallInput();
+#if defined(ORBIT_UI)
+    { // the stages the job screen walks through
+        orbJobStage("FLASH APP", appSize, appEntry.offset, true);
+        for (const auto &dp : dataPartitions) {
+            if (!dp.hasEntry || dp.copySize == 0) continue;
+            bool restored = false;
+            if (shouldRestore)
+                for (const auto &bp : prevInstall.partitions)
+                    if (bp.label == dp.label && !bp.lastBackupPath.isEmpty() && SDM.exists(bp.lastBackupPath))
+                        restored = true;
+            if (restored) continue;
+            char l[20];
+            snprintf(
+                l,
+                sizeof(l),
+                "FLASH %s",
+                dp.subtype == 0x81   ? "FAT"
+                : dp.subtype == 0x83 ? "LITTLEFS"
+                                     : "SPIFFS"
+            );
+            orbJobStage(l, dp.copySize > dp.entry.size ? dp.entry.size : dp.copySize, dp.entry.offset);
+        }
+        orbJobStage("WRITE TABLE", 0x6000);
+        orbJobStage("SET BOOT", 0x4000);
+        if (shouldRestore) orbJobStage("RESTORE DATA", 0x40000);
+    }
+#endif
     bool success = false;
     prog_handler = 0;
     if (!flashRawFromSd(file, appOffset, appSize, appEntry, true)) {
@@ -803,6 +1054,10 @@ void updateFromSD(const String &path) {
     uint32_t app_size = 0;
     uint32_t app_offset = 0;
     std::vector<LauncherInstallDataPartition> dataPartitions;
+#if defined(ORBIT_UI)
+    orbJobBegin(path.substring(path.lastIndexOf('/') + 1), false);
+    orbJobAppName(installedAppNameFromPath(path));
+#endif
 
     File file = SDM.open(path);
 
@@ -814,7 +1069,11 @@ void updateFromSD(const String &path) {
         app_size = effectiveSdAppSize(file, 0, file.size());
         if (!installFromSdDynamic(file, path, app_size, 0, dataPartitions)) { goto Exit; }
         file.close();
+#if defined(ORBIT_UI)
+        displayMsg("Complete");
+#else
         tft->fillScreen(BGCOLOR);
+#endif
 
         return (void)releaseHeapObjectsAndReboot();
     } else {
@@ -929,6 +1188,24 @@ void updateFromSD(const String &path) {
                     spiffsIt->copySize = 0;
                 } else if (spiffsIt->copySize > 0) {
                     bool copySpiffs = true;
+#if defined(ORBIT_UI)
+                    static const char *const B[3] = {"CANCEL", "NO", "YES"};
+                    int pick = -1;
+                    if (!orbAsk(
+                            "SPIFFS",
+                            "This image carries a SPIFFS partition. Copy its data too?",
+                            B,
+                            3,
+                            2,
+                            0,
+                            pick
+                        ) ||
+                        pick == 0) {
+                        file.close();
+                        return;
+                    }
+                    copySpiffs = pick == 2;
+#else
                     options = {
                         {"SPIFFS No",  [&]() { copySpiffs = false; } },
                         {"SPIFFS Yes", [&]() { copySpiffs = true; }  },
@@ -939,8 +1216,11 @@ void updateFromSD(const String &path) {
                         tft->fillScreen(BGCOLOR);
                         return;
                     }
+#endif
                     if (!copySpiffs) spiffsIt->copySize = 0;
+#if !defined(ORBIT_UI)
                     tft->fillRoundRect(6, 6, tftWidth - 12, tftHeight - 12, 5, BGCOLOR);
+#endif
                 }
             }
         }

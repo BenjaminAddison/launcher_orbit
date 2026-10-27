@@ -18,6 +18,10 @@
 #include "partition_install_layout.h"
 #include "partition_table_model.h"
 #include "ram_profile.h"
+#if defined(ORBIT_UI)
+#include "orbit/orbit_bridge.h"
+#include <esp_wifi.h>
+#endif
 #include "sd_functions.h"
 #include "settings.h"
 #include "utils.h"
@@ -508,6 +512,7 @@ void webUIMyNet() { startWebUi("", 0, false); }
 **  Function: loopOptionsWebUi
 **  Display options to launch the WebUI
 **********************************************************************/
+#if !defined(ORBIT_UI) // Orbit UI has its own, see src/orbit/
 void loopOptionsWebUi() {
     if (!hostedWifiAvailable) {
         displayError("ESP-Hosted unavailable: no WiFi", true);
@@ -521,6 +526,7 @@ void loopOptionsWebUi() {
 
     loopOptions(options);
 }
+#endif // !ORBIT_UI
 
 String humanReadableSize(uint64_t bytes) {
     if (bytes < 1024) return String(bytes) + " B";
@@ -744,6 +750,9 @@ void serveWebUIFile(
 }
 
 bool checkUserWebAuth(httpd_req_t *req, bool onFailureReturnLoginPage = false) {
+#if defined(ORBIT_UI)
+    orbWebLog(req->method, req->uri); // the request log on the device's screen
+#endif
     ensurePersistedSessionLoaded();
 
     String cookie = headerValue(req, "Cookie");
@@ -2190,6 +2199,7 @@ String readLineFromFile(File myFile) {
     return line;
 }
 
+#if !defined(ORBIT_UI) // Orbit UI has its own, see below
 void startWebUiLoopCommon(bool mode_ap) {
     String txt;
     if (!mode_ap) txt = launcherWifiLocalIp().c_str();
@@ -2237,6 +2247,67 @@ void startWebUiLoopCommon(bool mode_ap) {
         }
     }
 }
+#endif // !ORBIT_UI
+
+#if defined(ORBIT_UI)
+// Network cards: my network or access point
+void loopOptionsWebUi() {
+    if (!hostedWifiAvailable) {
+        displayError("ESP-Hosted unavailable: no WiFi", true);
+        return;
+    }
+    orb::WebModeScene m;
+    wifi_ap_record_t ap;
+    if (launcherWifiIsConnected() && esp_wifi_sta_get_ap_info(&ap) == ESP_OK)
+        strncpy(m.ssid, (const char *)ap.ssid, sizeof(m.ssid) - 1);
+    m.sel = m.ssid[0] ? 0 : 1;
+    orbEndTransient();
+    orb::push(m);
+    int r = orb::run(m);
+    if (r == 0) webUIMyNet();
+    else if (r == 1) startWebUi("Launcher", 0, true);
+    orbEndTransient();
+    if (orb::top() == &m) orb::pop();
+    else orb::remove(m);
+}
+
+// Beacon screen: QR code of the address, credentials, uptime, request log
+void startWebUiLoopCommon(bool mode_ap) {
+    String txt = mode_ap ? launcherWifiApIp().c_str() : launcherWifiLocalIp().c_str();
+    launcherConsolePrintln("Access: http://launcher.local");
+    launcherConsolePrintf("IP %s\n", txt.c_str());
+    launcherConsolePrintf("Usr: %s\n", wui_usr.c_str());
+    launcherConsolePrintf("Pwd: %s\n", wui_pwd.c_str());
+    orb::WebRunScene w;
+    w.ap = mode_ap;
+    strncpy(w.ip, txt.c_str(), sizeof(w.ip) - 1);
+    strncpy(w.user, wui_usr.c_str(), sizeof(w.user) - 1);
+    strncpy(w.pass, wui_pwd.c_str(), sizeof(w.pass) - 1);
+    wifi_ap_record_t ap;
+    if (!mode_ap && esp_wifi_sta_get_ap_info(&ap) == ESP_OK)
+        strncpy(w.ssid, (const char *)ap.ssid, sizeof(w.ssid) - 1);
+    w.begin();
+    orbEndTransient();
+    orb::push(w);
+    resetGlobals();
+    for (;;) {
+        orb::frame();
+        bool jobUp = orbSyncRemote();
+        if (shouldReboot) { return (void)releaseHeapObjectsAndReboot(); }
+        if (updateFromSd_var) {
+            updateFromSD(fileToCopy);
+            updateFromSd_var = false;
+            fileToCopy = "";
+            displayRedStripe("Restart your Device");
+        }
+        if (!jobUp && w.res != orb::RUNNING) break;
+    }
+    orbEndTransient();
+    if (orb::top() == &w) orb::pop();
+    else orb::remove(w);
+    orbToast("Web UI stopped");
+}
+#endif
 
 void stopWebServerAndWifi() {
     launcherWebServerStop(server);
