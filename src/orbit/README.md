@@ -106,8 +106,8 @@ and animations.
 
 ## Flash budget
 
-The Cardputer's app partition is 0x150000 bytes. Measured with LTO, this build has about
-5.7 KB left; upstream without the Orbit UI has about 33.8 KB. Habits that keep it in budget:
+The Cardputer's app partition is 0x170000 bytes (`custom_8Mb2.csv`); the Orbit UI outgrew
+the 0x150000 partition in `custom_8Mb.csv`. Habits that keep it in budget:
 
 - **No libm in the UI.** `fsin`, `fcos`, `expNeg`, `atan2_`, `fmodp`, `ifloor` and `iceil`
   replace sinf, cosf, expf, atan2f, fmodf, floorf and ceilf. The first two alone avoid about
