@@ -38,7 +38,8 @@ project is optimized for binary size first, not for abstraction or
 Follow [`boards/NEW_BOARD_GUIDE.md`](boards/NEW_BOARD_GUIDE.md) — it covers
 the env naming convention (`<vendor>-<device>{-<variant>}`), the
 `boards/_New-Device-Model/` template, registering the env in
-`platformio.ini` and `.github/workflows/main.yml`, and wiring hardware
+`platformio.ini` (this fork's CI builds only the Cardputer, so skip the
+`main.yml` step), and wiring hardware
 through the shared HAL. Read [`src/hal/README.md`](src/hal/README.md) for
 what the HAL already implements (buttons, encoder, touch, PMIC, gauge,
 backlight) before writing board-specific driver code — most new boards
@@ -64,16 +65,16 @@ build flags.
   across every board.
 - `lib/**` — vendored/submodule libraries (`DisplayDrivers`, `SensorLib`,
   `XPowersLib`, ...).
-- `.github/workflows/main.yml` — CI build matrix; one entry per enabled
-  env, must stay in sync with the boards actually meant to build.
+- `.github/workflows/main.yml` — CI build and release workflow. In this
+  fork its matrix holds only `m5stack-cardputer` (the Orbit UI build,
+  one binary for Cardputer and ADV); don't add other envs back to it.
 
 ## Working with boards
 
-- A board's env name in `platformio.ini`'s `default_envs` and in the CI
-  matrix (`.github/workflows/main.yml`) must match its
+- A board's env name in `platformio.ini`'s `default_envs` must match its
   `boards/<env>/` folder name and its `[env:<name>]` section exactly.
 - New/experimental envs are added commented-out and in alphabetical order
-  in both files; uncomment only once the board builds (and ideally has
+  in `default_envs`; uncomment only once the board builds (and ideally has
   been tested on real hardware).
 - When editing shared code (`src/**`, `src/hal/**`), consider every board
   that flag/function touches, not just the one you're currently working
