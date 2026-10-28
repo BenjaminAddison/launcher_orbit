@@ -1,3 +1,134 @@
+# Launcher · Orbit UI
+
+A from-scratch interface for [Launcher](https://github.com/bmorcelli/Launcher) on the
+**M5Stack Cardputer** (and Cardputer ADV): pixel art drawn for its 240×135 screen, with
+the same features underneath.
+
+<p align="center">
+  <img src="media/orbit/home.gif" alt="Orbit UI home screen: a carousel of tiles orbiting a planet">
+</p>
+
+Every image here was rendered by the firmware's own drawing code (`src/orbit`) in a
+desktop build, at 2× size. Nothing is a mockup.
+
+### Boot and home
+
+<p align="center">
+  <img src="media/orbit/launch.gif" width="49%" alt="Boot screen: a rocket on a launch pad counts down, then lifts off">
+  <img src="media/orbit/home-charge.png" width="49%" alt="Home carousel with the Charge tile selected">
+</p>
+
+The launch pad counts down to the app that boots next. **Enter** opens the Launcher, **1–9**
+boots that installed app straight away, and any other key boots now (or asks which app, if you
+have several). Home is a planet you orbit:
+SD card, Online, Web UI, USB drive, Partitions and Settings, then your installed apps, then
+**Charge** and **Power off** (Charge mode lives here now, not in Settings).
+
+### Installing
+
+<p align="center">
+  <img src="media/orbit/install.gif" width="49%" alt="Install screen: trajectory plot, percentage, stage checklist and speed">
+  <img src="media/orbit/download.png" width="49%" alt="Download screen saving a firmware to the SD card">
+</p>
+
+Installs from SD, online and the web UI all get the same flight screen: a trajectory, the
+percentage, a checklist of stages (flash app, SPIFFS, partition table, boot slot, restore
+data), speed, ETA and the flash address being written.
+
+### SD card
+
+<p align="center">
+  <img src="media/orbit/sd.png" width="49%" alt="SD browser listing firmware files with sizes">
+  <img src="media/orbit/sd-actions.png" width="49%" alt="Actions sheet for a firmware file: install, bind to key, rename, copy, delete">
+</p>
+<p align="center">
+  <img src="media/orbit/copy.png" width="49%" alt="Copy progress ring">
+  <img src="media/orbit/rename.png" width="49%" alt="On-screen keyboard renaming a file">
+</p>
+
+### Online
+
+<p align="center">
+  <img src="media/orbit/online-hub.png" width="49%" alt="Online hub with Catalog, Favorites and Updates tiles">
+  <img src="media/orbit/catalog.png" width="49%" alt="LauncherHub catalog list with starred firmware">
+</p>
+<p align="center">
+  <img src="media/orbit/firmware.png" width="49%" alt="Firmware page with emblem, version picker and release timeline">
+  <img src="media/orbit/error.png" width="49%" alt="Error dialog explaining there is not enough install space">
+</p>
+
+### Wi-Fi
+
+<p align="center">
+  <img src="media/orbit/wifi.gif" width="49%" alt="Wi-Fi radar sweeping and finding networks, then the network list">
+  <img src="media/orbit/wifi-password.png" width="49%" alt="Masked password entry with the keyboard map">
+</p>
+
+### Web UI and USB drive
+
+<p align="center">
+  <img src="media/orbit/webui.png" width="49%" alt="Web UI running with a scannable QR code, credentials and a live request log">
+  <img src="media/orbit/usb.png" width="49%" alt="USB drive screen: the Cardputer cabled to a computer, read and write counters">
+</p>
+
+The QR code is real: scan it to open the web UI.
+
+### Partitions and apps
+
+<p align="center">
+  <img src="media/orbit/partitions.png" width="49%" alt="Partition map bar and list">
+  <img src="media/orbit/partition-resize.png" width="49%" alt="Range slider resizing a partition">
+</p>
+<p align="center">
+  <img src="media/orbit/home-app.png" width="49%" alt="Home carousel with an installed app selected">
+  <img src="media/orbit/app.png" width="49%" alt="App dossier: sizes, backup state, source and actions">
+</p>
+
+### Settings, themes and charging
+
+<p align="center">
+  <img src="media/orbit/settings.png" width="49%" alt="Settings list with toggles and sliders">
+  <img src="media/orbit/theme-cycle.gif" width="49%" alt="Home screen cycling through the seven colour themes">
+</p>
+<p align="center">
+  <img src="media/orbit/themes.png" width="49%" alt="Theme picker with seven swatches">
+  <img src="media/orbit/charge.png" width="49%" alt="Charge mode: dim battery screen">
+</p>
+
+Seven themes: Nova, Aurora, Solar, Ice, Volt, Mono and Paper. Your old UI colour maps to the
+closest one the first time you boot.
+
+### Controls
+
+| Key | Does |
+|---|---|
+| `,` `/` | left / right (move along the orbit, change a value) |
+| `;` `.` | up / down (lists, tile groups on the home screen) |
+| Enter | open, select; hold it in the SD browser for the folder menu |
+| `` ` `` or Backspace | back |
+| Fn + `` ` `` | cancel text entry |
+| a–z on home | run a file bound to that key (SD › Bind to key) |
+| 1–9, 0 on the boot screen | boot that installed app |
+
+### Building
+
+The Orbit UI is turned on for the Cardputer only (`-D ORBIT_UI=1` in
+`boards/m5stack-cardputer/platformio.ini`); every other board builds the original UI.
+
+```
+git clone --recursive https://github.com/BenjaminAddison/launcher_orbit
+cd launcher_orbit
+pio run -e m5stack-cardputer
+```
+
+The new UI adds about 28 KB to the firmware, and the build still has about 5.7 KB free in the
+1.31 MB app partition. Developer notes are in [`src/orbit/README.md`](src/orbit/README.md).
+
+> **Status:** compiled, linked and checked screen by screen on desktop, but not yet run on a
+> real Cardputer.
+
+---
+
 # Launcher
 Application launcher for M5Stack, Lilygo, SeeedStudio, Waveshare, CYD, Marauder, and many other ESP32 devices.
 
