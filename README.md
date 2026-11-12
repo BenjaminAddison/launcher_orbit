@@ -12,17 +12,18 @@ This fork builds and releases for the Cardputer only. For every other board, use
 > run on a real Cardputer. Treat it as a beta and keep a copy of your current firmware.
 
 <p align="center">
-  <img src="media/orbit/home.gif" alt="Orbit UI home screen: a carousel of tiles orbiting a planet">
+  <img src="media/orbit/title.gif" alt="Launcher Orbit UI title card: a planet rises, the name appears and a rocket flies along the orbit">
 </p>
 
 Every image here was rendered by the firmware's own drawing code (`src/orbit`) in a
-desktop build, at 2× size. Nothing is a mockup.
+desktop build, at 2× size. Nothing is a mockup. For a 30-second tour, see the showreel
+([GIF](media/orbit/showreel.gif), [MP4](media/orbit/showreel.mp4)).
 
 ### Boot and home
 
 <p align="center">
   <img src="media/orbit/launch.gif" width="49%" alt="Boot screen: a rocket on a launch pad counts down, then lifts off">
-  <img src="media/orbit/home-charge.png" width="49%" alt="Home carousel with the Charge tile selected">
+  <img src="media/orbit/home.gif" width="49%" alt="Home carousel moving from SD card through the tools and apps to Charge">
 </p>
 
 The launch pad counts down to the app that boots next. **Enter** opens the Launcher, **1–9**
@@ -119,7 +120,10 @@ closest one the first time you boot.
 
 ### Flashing
 
-Download `Launcher-m5stack-cardputer.bin` from the
+**M5Burner:** open the **Cardputer** category, find **Launcher Orbit** and click **Burn**. It
+works on both the Cardputer and the Cardputer ADV.
+
+**By hand:** download `Launcher-m5stack-cardputer.bin` from the
 [Releases](https://github.com/BenjaminAddison/launcher_orbit/releases) page (the `beta`
 release is rebuilt from every push to `main`). One file works on both the Cardputer and the
 Cardputer ADV: the ADV keyboard is detected at boot.
@@ -131,8 +135,8 @@ cable to enter download mode, then:
 esptool.py --chip esp32s3 write_flash 0x0 Launcher-m5stack-cardputer.bin
 ```
 
-You can also use [web.esphome.io](https://web.esphome.io/). M5Burner and the upstream Launcher
-Flasher install upstream Launcher, not this fork.
+You can also use [web.esphome.io](https://web.esphome.io/). M5Burner's plain **Launcher**
+entry and the upstream Launcher Flasher install upstream Launcher, not this fork.
 
 ### Building
 
@@ -172,7 +176,8 @@ Developer notes are in [`src/orbit/README.md`](src/orbit/README.md).
 
 * The Cardputer build uses the Orbit UI; the rest of the source tree is upstream Launcher.
 * Charge mode is on the home screen instead of in Settings.
-* Releases contain the Cardputer binary only, and are not published to M5Burner.
+* Releases contain the Cardputer binary only. It is on M5Burner as **Launcher Orbit**, a
+  separate listing from upstream's **Launcher**.
 
 ---
 
