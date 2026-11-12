@@ -109,9 +109,9 @@ void JobScene::update(float dt, bool) {
     float x, y, dx, dy;
     rocketPos(x, y, dx, dy);
     for (int i = 0; i < 40 * dt; i++) {
-        float px = x + (rng.next() - .5f) * 2, vx = (rng.next() - .5f) * 8 - dx * 10,
+        float px = x - dx * 9 + (rng.next() - .5f) * 2, vx = (rng.next() - .5f) * 8 - dx * 10,
               vy = 10 + rng.next() * 8 - dy * 10, mx = 0.4f + rng.next() * 0.5f;
-        if (np < 64) parts[np++] = {px, y + 12, vx, vy, 0, mx, 0, 0};
+        if (np < 64) parts[np++] = {px, y + 1.5f - dy * 9, vx, vy, 0, mx, 0, 0}; // from the nozzle
     }
     int k = 0;
     for (int i = 0; i < np; i++) {
@@ -169,7 +169,7 @@ void JobScene::draw(Gfx &g) {
     }
     float rx_, ry_, rdx, rdy;
     rocketPos(rx_, ry_, rdx, rdy);
-    blit(g, SPR_MINIROCKET, jsround(rx_) - 4, jsround(ry_) - 6);
+    blitRot(g, SPR_MINIROCKET, rx_ + .5f, ry_ + 1.5f, rdx, rdy); // nose along the trajectory
     g.hline(wx + 1, jsround(ry_), 6, C(T_acc));
     sprintf(s, "ALT %dKM", jsround(P * 408));
     text(g, F_MICRO, s, wx + 4, wy + 3, C(T_dim));

@@ -558,6 +558,70 @@ struct SimSteps : StepsScene {
 };
 static SimSteps stepsSc;
 
+// ── showreel: a title card and a theme tour, for make_showreel.sh ──
+// Title: the home sky with the planet rising, a mini rocket on the orbit, the name dissolving in.
+struct TitleScene : Scene {
+    const char *sub = "";
+    void draw(Gfx &g) override {
+        drawSky(g, 20, H); // home stops the gradient at its hint bar; this card has none
+        drawStars(g, t, H, 2.0f);
+        float rise = easeOut(clampf(t / 1.4f, 0, 1));
+        PlanetP P{120, 372 - rise * 52, 220, 150 + t * 6};
+        drawPlanet(g, t, P);
+        // the orbit, and a rocket riding it
+        int ph = ifloor(t * 6);
+        for (int x = 0; x < W; x++) {
+            float o = fabsf((x - 120) / 60.0f);
+            int y = jsround(64 + o * sqrtf(o) * 6.5f);
+            int k = (x + ph) % 6;
+            if (k == 0) g.px(x, y, C(T_dim));
+            else if (k == 3) g.px(x, y, C(T_line2));
+        }
+        // nose along the orbit (its slope), exhaust trailing from the nozzle
+        float rx = -16 + fmodp(t * 46, W + 32), ro = fabsf((rx - 120) / 60.0f);
+        float ry = 64 + ro * sqrtf(ro) * 6.5f, sl = (rx < 120 ? -1 : 1) * 0.1625f * sqrtf(ro);
+        float l = sqrtf(1 + sl * sl), dx = 1 / l, dy = sl / l;
+        for (int i = 1; i < 9; i++)
+            g.px(jsround(rx - dx * (7 + i * 2)), jsround(ry - 1 - dy * (7 + i * 2)),
+                 i < 3 ? C(T_flame0) : i < 5 ? C(T_flame1) : i < 7 ? C(T_flame2) : C(T_line2));
+        blitRot(g, SPR_MINIROCKET, rx, ry - 1, dx, dy);
+        // name, dissolving in
+        uint8_t m = g.mask;
+        g.mask = (uint8_t)jsround(clampf((t - 0.35f) / 0.6f, 0, 1) * 16);
+        text(g, F_ORBIT, "LAUNCHER", 120, 18, C(T_hi), TOUT(TA(AL_C) | T_BIG, T_sky0));
+        g.mask = (uint8_t)jsround(clampf((t - 0.8f) / 0.5f, 0, 1) * 16);
+        int w = textW(F_ORBIT, "ORBIT UI") + 12;
+        g.fill(120 - w / 2, 46, w, 11, C(T_acc));
+        text(g, F_ORBIT, "ORBIT UI", 120, 48, C(T_onAcc), TA(AL_C));
+        g.mask = (uint8_t)jsround(clampf((t - 1.2f) / 0.5f, 0, 1) * 16);
+        text(g, F_MICRO, sub, 120, 124, C(T_text), TOUT(TA(AL_C), T_sky0));
+        g.mask = m;
+    }
+};
+static TitleScene title;
+static void titleScene(const char *sub) {
+    title = TitleScene();
+    title.sub = sub;
+    push(title, TR_NONE);
+    runForever();
+}
+// Theme tour: home rides the carousel while the palette steps through every theme.
+struct ThemeTour : Scene {
+    HomeScene *home = nullptr;
+    int shown = -1;
+    bool overlay() const override { return true; }
+    void update(float, bool) override {
+        int i = ifloor((t + 0.2f) / 0.75f) % THEME_COUNT;
+        if (i == shown) return;
+        shown = i;
+        setTheme(i);
+        toast(THEME_NAMES[i]);
+        if (i) home->key(K_RIGHT, 0);
+    }
+    void draw(Gfx &) override {}
+};
+static ThemeTour tour;
+
 void addGallery() {
     // stills
     SHOTS.push_back({"boot", 1.7f, {}, [] { baseStatus(); bootScene(); }});
@@ -641,5 +705,12 @@ void addGallery() {
     SHOTS.push_back({"film-home", 6.0f, K(0.6f, {{K_RIGHT, 0}, {K_RIGHT, 0}, {K_RIGHT, 0}, {K_RIGHT, 0}, {K_RIGHT, 0}, {K_RIGHT, 0}, {K_RIGHT, 0}, {K_DOWN, 0}}, 0.62f), [] { baseStatus(); homeScene(0); runForever(); }});
     SHOTS.push_back({"film-launch", 6.25f, {}, [] { baseStatus(); bootScene(); }});
     SHOTS.push_back({"film-install", 7.4f, {}, [] { baseStatus(); homeScene(0); installSim(false, "Bruce-cardputer.bin", 2490368, true, false, true); }});
+    SHOTS.push_back({"reel-title", 3.0f, {}, [] { baseStatus(); titleScene("FOR M5STACK CARDPUTER \xC2\xB7 CARDPUTER ADV"); }});
+    SHOTS.push_back({"reel-outro", 3.0f, {}, [] { baseStatus(); titleScene("GITHUB.COM/BENJAMINADDISON/LAUNCHER_ORBIT"); }});
+    SHOTS.push_back({"reel-launch", 8.0f, {}, [] { baseStatus(); bootScene(); }});
+    SHOTS.push_back({"reel-themes", 5.3f, {}, [] {
+        baseStatus(); homeScene(0);
+        tour = ThemeTour(); tour.home = &home;
+        push(tour, TR_NONE); runForever(); }});
     SHOTS.push_back({"film-wifi", 4.4f, {{3.0f, K_DOWN, 0}, {3.4f, K_DOWN, 0}}, [] { baseStatus(); wifiScene(true, nullptr, true); }});
 }

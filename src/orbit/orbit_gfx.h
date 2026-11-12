@@ -134,6 +134,8 @@ extern Gfx G;
 // Sprites and glyph icons
 enum PalMode : uint8_t { PM_FULL, PM_DIM, PM_FAR };
 void blit(Gfx &g, const SpriteDef &s, int x, int y, PalMode m = PM_FULL, const uint16_t *xXZ = nullptr);
+// a sprite drawn nose-up, turned to face the unit vector (dx, dy) and centred on (cx, cy); up to 256 px
+void blitRot(Gfx &g, const SpriteDef &s, float cx, float cy, float dx, float dy);
 void glyph(Gfx &g, uint8_t id, int x, int y, uint16_t c, int32_t c2 = -1);
 inline int glyphW(uint8_t id) { return glyph_w[id]; }
 inline int glyphH(uint8_t id) { return glyph_h[id]; }

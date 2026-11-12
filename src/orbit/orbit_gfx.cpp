@@ -350,6 +350,27 @@ void blit(Gfx &g, const SpriteDef &s, int x, int y, PalMode m, const uint16_t *x
     }
 }
 
+void blitRot(Gfx &g, const SpriteDef &s, float cx, float cy, float dx, float dy) {
+    uint16_t pal[16];
+    for (int i = 0; i < s.npal; i++) pal[i + 1] = palColor(s.pal[i], PM_FULL, nullptr);
+    uint8_t idx[256];
+    const uint8_t *p = s.px;
+    for (int n = 0, N = s.w * s.h; n < N;) {
+        uint8_t v = *p++;
+        for (int r = (v >> 4) + 1; r-- && n < N;) idx[n++] = v & 15;
+    }
+    // each screen pixel samples the sprite pixel under it, rotated back (nearest, so no holes)
+    int R = (s.w + s.h) / 2, x0 = ifloor(cx), y0 = ifloor(cy);
+    for (int y = y0 - R; y <= y0 + R; y++)
+        for (int x = x0 - R; x <= x0 + R; x++) {
+            float ox = x + .5f - cx, oy = y + .5f - cy;
+            int i = ifloor(oy * dx - ox * dy + s.w * .5f), j = ifloor(-ox * dx - oy * dy + s.h * .5f);
+            if (i < 0 || j < 0 || i >= s.w || j >= s.h) continue;
+            uint8_t c = idx[j * s.w + i];
+            if (c) g.px(x, y, pal[c]);
+        }
+}
+
 void glyph(Gfx &g, uint8_t id, int x, int y, uint16_t c, int32_t c2) {
     if (id >= G_COUNT) return;
     int w = glyph_w[id], h = glyph_h[id], o = glyph_off[id];
