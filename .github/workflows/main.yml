@@ -200,14 +200,17 @@
           uses: actions/download-artifact@v7
           with:
             path: ~/LauncherArtifacts
+            merge-multiple: true
 
+        # With a single artifact, download-artifact extracts straight into the path (no
+        # per-artifact folder), so find the binaries wherever they landed.
         - name: Move artifacts to the correct folders
           run: |
             set -x
-            pwd
             mkdir -p artifacts
-            cp -f ~/LauncherArtifacts/*/*.bin artifacts
-            tree
+            find ~/LauncherArtifacts -name '*.bin' -exec cp -f {} artifacts/ \;
+            ls -l artifacts
+            compgen -G 'artifacts/*.bin' > /dev/null
 
         - name: Analyze artifact partition usage
           run: |

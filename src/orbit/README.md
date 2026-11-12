@@ -100,6 +100,10 @@ regenerate every image in `media/orbit/` (needs Python with Pillow):
 support_files/orbit_assets/harness/make_gallery.sh
 ```
 
+`make_showreel.sh` (also needs numpy, and ffmpeg for the MP4) joins the title card, launch,
+home, theme tour, Wi-Fi and install clips into `media/orbit/showreel.gif` (2×),
+`showreel.mp4` (4×) and a still `cover.png`, e.g. for an M5Burner listing.
+
 In `shots.cpp`, the `S..` scenarios mirror the design mockup's screen registry and were used
 to compare the port with the mockup pixel by pixel. `addGallery()` holds the README screens
 and animations.
