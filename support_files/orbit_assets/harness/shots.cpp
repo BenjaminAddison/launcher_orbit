@@ -705,7 +705,7 @@ void addGallery() {
     SHOTS.push_back({"film-home", 6.0f, K(0.6f, {{K_RIGHT, 0}, {K_RIGHT, 0}, {K_RIGHT, 0}, {K_RIGHT, 0}, {K_RIGHT, 0}, {K_RIGHT, 0}, {K_RIGHT, 0}, {K_DOWN, 0}}, 0.62f), [] { baseStatus(); homeScene(0); runForever(); }});
     SHOTS.push_back({"film-launch", 6.25f, {}, [] { baseStatus(); bootScene(); }});
     SHOTS.push_back({"film-install", 7.4f, {}, [] { baseStatus(); homeScene(0); installSim(false, "Bruce-cardputer.bin", 2490368, true, false, true); }});
-    SHOTS.push_back({"reel-title", 3.0f, {}, [] { baseStatus(); titleScene("FOR M5STACK CARDPUTER \xC2\xB7 CARDPUTER ADV"); }});
+    SHOTS.push_back({"reel-title", 6.0f, {}, [] { baseStatus(); titleScene("FOR M5STACK CARDPUTER \xC2\xB7 CARDPUTER ADV"); }});
     SHOTS.push_back({"reel-outro", 3.0f, {}, [] { baseStatus(); titleScene("GITHUB.COM/BENJAMINADDISON/LAUNCHER_ORBIT"); }});
     SHOTS.push_back({"reel-launch", 8.0f, {}, [] { baseStatus(); bootScene(); }});
     SHOTS.push_back({"reel-themes", 5.3f, {}, [] {

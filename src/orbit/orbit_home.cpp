@@ -164,6 +164,7 @@ void HomeScene::select(int i) {
 }
 void HomeScene::key(uint8_t k, char ch) {
     if (!n) return;
+    jump = 0;
     if (k == K_RIGHT) {
         if (sel == n - 1 && !devMode) {
             passBy++;
@@ -190,8 +191,8 @@ void HomeScene::key(uint8_t k, char ch) {
         gi = (gi + (k == K_DOWN ? 1 : -1) + ng) % ng;
         for (int i = 0; i < n; i++)
             if (tiles[i].group == groups[gi]) {
-                select(i);
-                pos = sel;
+                select(i); // update() eases pos there, as for LEFT/RIGHT
+                jump = k == K_DOWN ? 1 : -1;
                 lockT = 0;
                 break;
             }
@@ -215,8 +216,12 @@ void HomeScene::update(float dt, bool) {
     float d = sel - pos;
     if (d > n / 2.0f) d -= n;
     if (d < -n / 2.0f) d += n;
+    if (jump * d < 0) d += jump * n; // a group jump goes the way the key points, not the short way
     pos += d * (dt * 11 < 1 ? dt * 11 : 1);
-    if (fabsf(d) < 0.002f) pos = sel;
+    if (fabsf(d) < 0.002f) {
+        pos = sel;
+        jump = 0;
+    }
     pos = fmodp(pos + n, n);
 }
 void HomeScene::meta(int i, char *out, uint16_t &c) {
