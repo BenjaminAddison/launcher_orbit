@@ -1,6 +1,10 @@
 ---
   name: Build and Push OR check-PR
 
+  permissions:
+    contents: write
+    issues: write
+
   concurrency:
     group: ${{ github.workflow }}-${{ github.ref }}
     cancel-in-progress: true
@@ -49,98 +53,10 @@
         fail-fast: false
         matrix:
           board:
-            - { env: "arduino-nesso-n1"           }
+            # This fork only ships the Orbit UI build. The m5stack-cardputer
+            # env is one binary for the Cardputer and Cardputer ADV (the ADV
+            # keyboard is detected at boot).
             - { env: "m5stack-cardputer"          }
-            - { env: "m5stack-cplus2"             }
-            - { env: "m5stack-plus"               }
-            - { env: "m5stack-core2"              }
-            - { env: "m5stack-core"               }
-            - { env: "m5stack-core-4Mb"           }
-            - { env: "m5stack-cores3"             }
-            - { env: "m5stack-dinmeter"           }
-            - { env: "m5stack-tab5"               }
-            - { env: "m5stack-paper-s3"           }
-            - { env: "m5stack-paper"              }
-            - { env: "m5stack-paper-color"        }
-            - { env: "m5stack-paper-mono"         }
-            - { env: "m5stack-sticks3"            }
-            - { env: "headless-esp32s3-4mb"       }
-            - { env: "headless-esp32s3-8mb"       }
-            - { env: "headless-esp32s3-16mb"      }
-            - { env: "headless-esp32-4mb"         }
-            - { env: "headless-esp32-8mb"         }
-            - { env: "headless-xiao-esp32s3-8mb"  }
-            - { env: "headless-xiao-esp32s3-16mb" }
-            - { env: "headless-xiao-esp32c5-8mb"  }
-            - { env: "CYD-2432S028"               }
-            - { env: "CYD-2-USB"                  }
-            - { env: "CYD-2432W328C_2"            }
-            - { env: "CYD-2432W328C"              }
-            - { env: "CYD-2432W328R"              }
-            - { env: "CYD-2432S024R"              }
-            - { env: "CYD-2432S022C"              }
-            - { env: "CYD-2432S032C"              }
-            - { env: "CYD-2432S032R"              }
-            - { env: "CYD-3248S035R"              }
-            - { env: "CYD-3248S035C"              }
-            - { env: "ESP32-E32R40T"              }
-            - { env: "CYD-8048S043C"              }
-            - { env: "CYD-8048W550C"              }
-            - { env: "NM-CYD-C5"                  }
-            - { env: "CYD-3248W535C"              }
-            - { env: "CYD-4827S043R"              }
-            - { env: "lilygo-t-dongle-s3-tft"     }
-            - { env: "lilygo-t-dongle-c5-tft"     }
-            - { env: "lilygo-t-display-S3-touch"  }
-            - { env: "lilygo-t-display-S3-pro"    }
-            - { env: "lilygo-t-display-p4"        }
-            - { env: "lilygo-t-display-c5"        }
-            - { env: "lilygo-t-embed-all"         }
-            - { env: "lilygo-t-lora-pager"        }
-            - { env: "lilygo-t-deck-plus"         }
-            - { env: "lilygo-t-deck"              }
-            - { env: "lilygo-t-deck-pro"          }
-            - { env: "lilygo-t5-epaper-s3-pro"    }
-            - { env: "lilygo-t-hmi"               }
-            - { env: "lilygo-t-display-S3-amoled" }
-            - { env: "lilygo-t-display-S3-amoled-plus" }
-            - { env: "lilygo-t-watch-s3"          }
-            - { env: "lilygo-t-watch-ultra"       }
-            - { env: "reaper"                     }
-            - { env: "renphone-accretion"        }
-            - { env: "seeedstudio-esp32s3-touch-147" }
-            - { env: "seeedstudio-reterminal-d1001" }
-            - { env: "seeedstudio-reterminal-e1001" }
-            - { env: "seeedstudio-reterminal-sticky" }
-            - { env: "seeedstudio-sensecap"       }
-            - { env: "seeedstudio-wio-tracker-l2" }
-            - { env: "smoochiee-board"            }
-            - { env: "Marauder-v4-OG"             }
-            - { env: "Marauder-v61"               }
-            - { env: "Marauder-v7"                }
-            - { env: "Marauder-v8"                }
-            - { env: "pancake"                    }
-            - { env: "Marauder-Mini"              }
-            - { env: "Awok-Mini"                  }
-            - { env: "Awok-Touch"                 }
-            - { env: "WaveSentry-R1"              }
-            - { env: "Phantom_S024R"              }
-            - { env: "elecrow-24B"                }
-            - { env: "elecrow-28B"                }
-            - { env: "elecrow-35B"                }
-            - { env: "elecrow-35Bv2_2"            }
-            - { env: "elecrow-esp32p4-7in"        }
-            - { env: "elecrow-esp32s3-5in"        }
-            - { env: "elecrow-thinknode-m9"       }
-            - { env: "waveshare-esp32-s3-lcd-147" }
-            - { env: "waveshare-esp32-c5-lcd-147" }
-            - { env: "waveshare-esp32-c6-lcd-147" }
-            - { env: "waveshare-esp32-c6-lcd-130" }
-            - { env: "waveshare-esp32-s3-touch-amoled-206"}
-            - { env: "ES3C28P"                    }
-            - { env: "xteink-x3-x4"               }
-            - { env: "xteink-x4pro"               }
-            - { env: "xueersi-xiaomiao"           }
 
       steps:
           - uses: actions/checkout@v5
@@ -213,6 +129,8 @@
               }
 
               for name, value in replacements.items():
+                  if value == c_string(""):
+                      continue
                   contents = re.sub(
                       rf"^(\s*-D{name}=).*$",
                       rf"\g<1>{value}",
@@ -362,13 +280,6 @@
             make_latest: false
             generate_release_notes: false
 
-        - name: Trigger WebPage deploy (workflow_dispatch)
-          if:  github.ref_type != 'tag'
-          env:
-            GH_TOKEN: ${{ github.token }}
-          run: |
-            gh workflow list
-            gh workflow run .github/workflows/deploy.yml --ref WebPage
 
     create_release:
       runs-on: ubuntu-latest
@@ -385,15 +296,6 @@
           version=${{ github.ref_name }}
           echo "version=${version}" > $GITHUB_OUTPUT
 
-      - name: setup Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.13"
-
-      - name: Install M5Burner post dependencies
-        run: |
-          pip install requests
-
       - uses: actions/download-artifact@v7
         with:
           merge-multiple: true
@@ -401,28 +303,11 @@
       - name: Create Release ${{ steps.launcher_version.outputs.version }}
         uses: softprops/action-gh-release@v2
         with:
-          name: Launcher Release ${{ steps.launcher_version.outputs.version }}
+          name: Launcher Orbit ${{ steps.launcher_version.outputs.version }}
           tag_name: ${{ steps.launcher_version.outputs.version }}
           generate_release_notes: true
           files: |
             Launcher-*.bin
-
-      - name: Upload and publish on M5Burner
-        env:
-          M5BURNER_USER: ${{ secrets.M5BURNER_USER }}
-          M5BURNER_PWD: ${{ secrets.M5BURNER_PWD }}
-        run: |
-          python support_files/m5burner_post.py \
-            --user "$M5BURNER_USER" \
-            --password "$M5BURNER_PWD" \
-            --tag "${{ steps.launcher_version.outputs.version }}"
-
-      - name: Trigger WebPage deploy (workflow_dispatch)
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh workflow list
-          gh workflow run .github/workflows/deploy.yml --ref WebPage
 
       - name: Close "Fixed on Beta" issues
         env:
