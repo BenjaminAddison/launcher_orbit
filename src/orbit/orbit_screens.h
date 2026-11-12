@@ -41,6 +41,7 @@ class HomeScene : public Scene {
 public:
     Tile *tiles = nullptr;
     int n = 0, sel = 0, passBy = 0;
+    int8_t jump = 0; // last UP/DOWN: +1 or -1, so the carousel eases the way the key points
     float pos = 0, lockT = 9, denyT = 9;
     bool shortcuts = false, devMode = false;
     const char *version = "";
